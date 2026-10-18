@@ -7,12 +7,11 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/gosolu/clapbot/internal/gateway"
 	"github.com/gosolu/clapbot/internal/store"
-	"github.com/mattn/go-isatty"
 )
 
 // IsTTY reports whether stdin/stdout is an interactive terminal.
 func IsTTY() bool {
-	return isatty.IsTerminal(os.Stdin.Fd()) && isatty.IsTerminal(os.Stdout.Fd())
+	return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stdout.Fd())
 }
 
 // PickSession opens an interactive huh selector to choose a saved session or start a new one.

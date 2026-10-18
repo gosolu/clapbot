@@ -80,11 +80,9 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.cancel = cancel
 	b.mu.Unlock()
 
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
+	b.wg.Go(func() {
 		b.wsLoop(cctx)
-	}()
+	})
 	log.Printf("[feishu] started WebSocket long-connection channel")
 	return nil
 }

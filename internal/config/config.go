@@ -314,9 +314,9 @@ func expandEnvPlaceholders(s string) string {
 			end := strings.IndexByte(s[i+2:], '}')
 			if end >= 0 {
 				varName := s[i+2 : i+2+end]
-				if defIdx := strings.Index(varName, ":-"); defIdx >= 0 {
-					key := varName[:defIdx]
-					defVal := varName[defIdx+2:]
+				if before, after, ok := strings.Cut(varName, ":-"); ok {
+					key := before
+					defVal := after
 					if val := os.Getenv(key); val != "" {
 						out.WriteString(val)
 					} else {
