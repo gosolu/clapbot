@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	macOSLabel      = "com.gosolu.clapbot"
-	linuxUnitName   = "clapbot.service"
+	macOSLabel    = "com.gosolu.clapbot"
+	linuxUnitName = "clapbot.service"
 )
 
 // Manager handles installing, starting, stopping, and checking the OS background daemon.

@@ -609,7 +609,7 @@ func encodePBFrame(f pbFrame) []byte {
 }
 
 func appendVarintField(dst []byte, fieldNum uint64, val uint64) []byte {
-	dst = binary.AppendUvarint(dst, (fieldNum<<3)|0)
+	dst = binary.AppendUvarint(dst, fieldNum<<3)
 	dst = binary.AppendUvarint(dst, val)
 	return dst
 }

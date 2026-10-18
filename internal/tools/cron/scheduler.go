@@ -29,12 +29,12 @@ type Scheduler struct {
 	store   *store.SQLiteStore
 	trigger TriggerFunc
 
-	mu      sync.Mutex
+	mu         sync.Mutex
 	cronEngine *cron.Cron
-	cronIDs map[string]cron.EntryID
-	timers  map[string]*time.Timer
-	ctx     context.Context
-	cancel  context.CancelFunc
+	cronIDs    map[string]cron.EntryID
+	timers     map[string]*time.Timer
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // NewScheduler creates a new Scheduler backed by SQLiteStore.

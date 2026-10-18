@@ -82,7 +82,7 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 		MaxTokens:   1024,
 	}
 
-	var policy react.PermissionPolicy = react.AllowAllPermissionPolicy()
+	policy := react.AllowAllPermissionPolicy()
 	if strings.EqualFold(cfg.Permissions.Mode, "rules") || len(cfg.Permissions.Deny) > 0 {
 		policy = react.PermissionRules{
 			Allow:    cfg.Permissions.Allow,
