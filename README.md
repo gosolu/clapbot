@@ -1,4 +1,4 @@
-# 🦀 Clapbot
+# 👏 Clapbot
 
 A self-hosted, single-binary personal AI assistant and multi-channel agent gateway written in Go (`CGO_ENABLED=0`), built on top of [`github.com/gosolu/react`](https://github.com/gosolu/react).
 

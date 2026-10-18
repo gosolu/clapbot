@@ -61,7 +61,7 @@ func run(args []string) error {
 }
 
 func printUsage() {
-	fmt.Println(`🦀 Clapbot — Personal AI Assistant & Multi-Channel Agent Gateway (powered by gosolu/react)
+	fmt.Println(`👏 Clapbot — Personal AI Assistant & Multi-Channel Agent Gateway (powered by gosolu/react)
 
 Usage:
   clapbot [chat] [flags]            Interactive terminal REPL (attaches to Gateway if running)

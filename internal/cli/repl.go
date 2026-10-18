@@ -49,7 +49,7 @@ func RunREPL(ctx context.Context, opts REPLOptions) error {
 		mode = "gateway-attached"
 	}
 
-	fmt.Printf("%s%s🦀 Clapbot%s %s(%s | session: %s | workspace: %s)%s\n",
+	fmt.Printf("%s%s👏 Clapbot%s %s(%s | session: %s | workspace: %s)%s\n",
 		ansiBold, ansiCyan, ansiReset, ansiDim, mode, sessionID, workspace, ansiReset)
 	fmt.Printf("%sType /help for commands, /sessions to switch conversations, /model to switch models, or /exit to quit.%s\n\n",
 		ansiDim, ansiReset)
@@ -153,7 +153,8 @@ func streamEngineTurn(ctx context.Context, eng *runtime.Engine, req runtime.Turn
 			}
 			return "", false, err
 		}
-		renderEvent(ev.Type, ev.Agent, ev.Depth, ev.Text,
+		renderEvent(
+			ev.Type, ev.Agent, ev.Depth, ev.Text,
 			func() string {
 				if ev.ToolCall != nil {
 					return ev.ToolCall.Name
