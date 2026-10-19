@@ -1,0 +1,151 @@
+# ==============================================================================
+# Clapbot Configuration Example
+#
+# Copy this file to ~/.clapbot/config.toml (or set $CLAPBOT_HOME to customize):
+#   mkdir -p ~/.clapbot
+#   cp config.example.toml ~/.clapbot/config.toml
+#
+# Environment variables can be referenced with ${VAR_NAME} or ${VAR_NAME:-default}.
+# ==============================================================================
+
+# Default profile alias to use for conversations (must exist in [profiles])
+default_profile = "default"
+
+# Root workspace directory for agent tool execution (file editing, shell commands).
+# Leading ~/ is automatically expanded to the user's home directory.
+workspace = "~/.clapbot/workspace"
+
+# Token budget threshold for conversation history compaction.
+# When the session context exceeds this budget, Clapbot automatically summarizes
+# earlier turns using gosolu/react ContextSummarizer.
+context_budget = 64000
+
+# Address and port for the local HTTP / WebSocket Gateway daemon.
+gateway_addr = "127.0.0.1:8765"
+
+# Optional shared bearer token for securing Gateway HTTP and WebSocket endpoints.
+# If left empty, local loopback connections do not require authentication.
+gateway_token = ""
+
+# ------------------------------------------------------------------------------
+# LLM Model Profiles
+#
+# Define one or more named profiles. Each profile specifies a provider and model.
+# Supported providers: openai, anthropic, deepseek, opencode, mock
+# Supported wire_api: chat (default: /v1/chat/completions), responses (/v1/responses)
+# ------------------------------------------------------------------------------
+[profiles.default]
+provider = "openai"
+model = "gpt-4o"
+api_key = "${OPENAI_API_KEY}"
+# base_url = "https://api.openai.com/v1"  # Optional custom base URL
+# wire_api = "chat"                      # chat | responses
+
+[profiles.fast]
+provider = "openai"
+model = "gpt-4o-mini"
+api_key = "${OPENAI_API_KEY}"
+
+[profiles.reasoner]
+provider = "deepseek"
+model = "deepseek-reasoner"
+api_key = "${DEEPSEEK_API_KEY}"
+
+[profiles.anthropic]
+provider = "anthropic"
+model = "claude-sonnet-4-5"
+api_key = "${ANTHROPIC_API_KEY}"
+
+# Example: Local LLM via Ollama or vLLM (using openai-compatible provider)
+[profiles.local]
+provider = "openai"
+model = "qwen2.5-coder:7b"
+api_key = "ollama"
+base_url = "http://127.0.0.1:11434/v1"
+
+# ------------------------------------------------------------------------------
+# Permission Policies
+#
+# Controls tool invocation permissions.
+# mode:
+#   - "allow_all": Run tools without manual confirmation (default)
+#   - "rules": Enforce allow, ask, and deny pattern lists
+# ------------------------------------------------------------------------------
+[permissions]
+mode = "allow_all"
+# allow = ["*"]
+# ask = ["shell(*)"]
+# deny = ["shell(rm -rf *)"]
+
+# ------------------------------------------------------------------------------
+# Chat Channel Integrations
+# ------------------------------------------------------------------------------
+[channels.telegram]
+# Enable Telegram bot channel (uses long-polling, no public IP/webhook needed)
+enabled = false
+bot_token = "${TELEGRAM_BOT_TOKEN}"
+# Allowlist of Telegram numeric user IDs or usernames permitted to talk to the bot.
+# Leave empty to allow all incoming users.
+allowed_users = []
+# Streaming mode:
+#   - "edit": Live-edits message bubble periodically as tokens arrive (1.1s rate-limit safe)
+#   - "final": Sends single response after the full turn completes
+stream_mode = "edit"
+
+[channels.feishu]
+# Enable Feishu / Lark bot channel (uses WebSocket long connection, no webhook needed)
+enabled = false
+app_id = "${FEISHU_APP_ID}"
+app_secret = "${FEISHU_APP_SECRET}"
+# Domain:
+#   - "https://open.feishu.cn" for Feishu (China)
+#   - "https://open.larksuite.com" for Lark (International)
+domain = "https://open.feishu.cn"
+# Allowlist of Feishu open_ids permitted to talk to the bot (empty = allow all)
+allowed_users = []
+stream_mode = "edit"
+
+# ------------------------------------------------------------------------------
+# Web Search & Web Fetch Configuration
+#
+# Supported search providers: duckduckgo, brave, tavily, searxng
+# ------------------------------------------------------------------------------
+[web]
+search_provider = "duckduckgo"
+# search_api_key = "${BRAVE_API_KEY}"   # Required if search_provider = "brave" or "tavily"
+# searxng_url = "http://localhost:8080" # Required if search_provider = "searxng"
+
+# ------------------------------------------------------------------------------
+# Sub-agents
+#
+# Specialized sub-agents exposed to the parent agent as callable tools via agent.AsTool.
+# ------------------------------------------------------------------------------
+[[subagents]]
+name = "researcher"
+description = "Research sub-agent for web search, reading documentation, and summarizing findings."
+profile = "default"
+system_prompt = "You are a specialized research assistant. Find relevant facts and synthesize clear summaries."
+
+[[subagents]]
+name = "coder"
+description = "Coding sub-agent for inspecting, writing, and testing code in the workspace."
+profile = "default"
+system_prompt = "You are a specialized programming assistant. Focus on clean code, test coverage, and precision."
+
+# ------------------------------------------------------------------------------
+# MCP (Model Context Protocol) Servers
+#
+# Bridges external MCP servers into Clapbot as react tools via JSON-RPC 2.0.
+# Supports stdio (command + args + env) and remote SSE/HTTP (url + headers).
+# ------------------------------------------------------------------------------
+[mcp_servers]
+# Example: stdio MCP server (e.g. SQLite MCP server or filesystem server)
+# [mcp_servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+# env = { "NODE_ENV" = "production" }
+
+# Example: Remote HTTP / SSE MCP server
+# [mcp_servers.remote]
+# url = "http://127.0.0.1:8000/sse"
+# headers = { "Authorization" = "Bearer ${REMOTE_MCP_TOKEN}" }

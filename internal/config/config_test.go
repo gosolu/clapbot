@@ -72,3 +72,37 @@ profiles:
 		t.Fatalf("expected sk-legacy-key, got %q", cfg.Profiles["fast"].APIKey)
 	}
 }
+
+func TestConfigExampleTOML(t *testing.T) {
+	examplePath := filepath.Join("..", "..", "config.example.toml")
+	data, err := os.ReadFile(examplePath)
+	if err != nil {
+		t.Fatalf("read config.example.toml: %v", err)
+	}
+
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "config.toml")
+	if err := os.WriteFile(targetPath, data, 0600); err != nil {
+		t.Fatalf("write temp config.toml: %v", err)
+	}
+
+	t.Setenv("OPENAI_API_KEY", "sk-test-key")
+	t.Setenv("DEEPSEEK_API_KEY", "sk-deepseek-key")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-key")
+
+	cfg, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load config.example.toml failed: %v", err)
+	}
+
+	if cfg.DefaultProfile != "default" {
+		t.Errorf("expected default profile 'default', got %q", cfg.DefaultProfile)
+	}
+	if len(cfg.Profiles) < 4 {
+		t.Errorf("expected at least 4 profiles, got %d", len(cfg.Profiles))
+	}
+	if len(cfg.Subagents) != 2 {
+		t.Errorf("expected 2 subagents, got %d", len(cfg.Subagents))
+	}
+}
+

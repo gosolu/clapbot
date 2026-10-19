@@ -35,6 +35,9 @@ CGO_ENABLED=0 go build -o clapbot ./cmd/clapbot
 # Run interactive onboarding wizard (configures provider, model, Telegram, Feishu)
 ./clapbot onboard
 
+# Or copy and customize the example configuration:
+# cp config.example.toml ~/.clapbot/config.toml
+
 # Start interactive terminal chat
 ./clapbot chat
 
