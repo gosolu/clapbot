@@ -69,9 +69,10 @@ type FeishuConfig struct {
 
 // WebConfig configures web fetch and web search tools.
 type WebConfig struct {
-	SearchProvider string `toml:"search_provider" yaml:"search_provider"` // duckduckgo | brave | tavily | searxng
+	SearchProvider string `toml:"search_provider" yaml:"search_provider"` // duckduckgo | brave | tavily | deepseek
 	SearchAPIKey   string `toml:"search_api_key,omitempty" yaml:"search_api_key,omitempty"`
-	SearxngURL     string `toml:"searxng_url,omitempty" yaml:"searxng_url,omitempty"`
+	FetchProvider  string `toml:"fetch_provider,omitempty" yaml:"fetch_provider,omitempty"` // direct | deepseek
+	FetchAPIKey    string `toml:"fetch_api_key,omitempty" yaml:"fetch_api_key,omitempty"`
 }
 
 // SubagentConfig defines a pre-configured sub-agent exposed via agent.AsTool.

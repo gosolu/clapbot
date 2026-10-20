@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ import (
 	"github.com/gosolu/clapbot/internal/config"
 	"github.com/gosolu/react"
 )
+
+var deepseekBaseURL = "https://api.deepseek.com"
 
 type fetchInput struct {
 	URL      string `json:"url" desc:"The HTTP/HTTPS URL to fetch and extract text/markdown from."`
@@ -40,13 +43,13 @@ func Tools(cfg config.WebConfig, client *http.Client) []react.Tool {
 		client = &http.Client{Timeout: 25 * time.Second}
 	}
 	return []react.Tool{
-		NewFetchTool(client),
+		NewFetchTool(cfg, client),
 		NewSearchTool(cfg, client),
 	}
 }
 
 // NewFetchTool builds the web_fetch tool.
-func NewFetchTool(client *http.Client) react.Tool {
+func NewFetchTool(cfg config.WebConfig, client *http.Client) react.Tool {
 	if client == nil {
 		client = &http.Client{Timeout: 25 * time.Second}
 	}
@@ -61,33 +64,25 @@ func NewFetchTool(client *http.Client) react.Tool {
 			if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
 				u = "https://" + u
 			}
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+
+			fetchProvider := strings.ToLower(strings.TrimSpace(cfg.FetchProvider))
+			if fetchProvider == "" && strings.EqualFold(strings.TrimSpace(cfg.SearchProvider), "deepseek") {
+				fetchProvider = "deepseek"
+			}
+
+			var (
+				text string
+				err  error
+			)
+			switch fetchProvider {
+			case "deepseek":
+				apiKey := resolveDeepSeekAPIKey(cfg.FetchAPIKey, cfg.SearchAPIKey)
+				text, err = fetchDeepSeek(ctx, client, apiKey, u)
+			default:
+				text, err = fetchDirect(ctx, client, u)
+			}
 			if err != nil {
 				return "", err
-			}
-			req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Clapbot/1.0)")
-			req.Header.Set("Accept", "text/markdown, text/html, application/xhtml+xml, text/plain;q=0.9, */*;q=0.8")
-
-			resp, err := client.Do(req)
-			if err != nil {
-				return "", fmt.Errorf("fetch %s: %w", u, err)
-			}
-			defer func() { _ = resp.Body.Close() }()
-
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-			if err != nil {
-				return "", err
-			}
-			if resp.StatusCode >= 400 {
-				return "", fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, u, truncateRunes(string(body), 500))
-			}
-
-			ct := strings.ToLower(resp.Header.Get("Content-Type"))
-			var text string
-			if strings.Contains(ct, "html") || bytes.Contains(body[:min(len(body), 512)], []byte("<html")) {
-				text = HTMLToMarkdown(string(body))
-			} else {
-				text = string(body)
 			}
 
 			maxChars := in.MaxChars
@@ -98,6 +93,35 @@ func NewFetchTool(client *http.Client) react.Tool {
 		},
 		react.ReadOnly(),
 	)
+}
+
+func fetchDirect(ctx context.Context, client *http.Client, u string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Clapbot/1.0)")
+	req.Header.Set("Accept", "text/markdown, text/html, application/xhtml+xml, text/plain;q=0.9, */*;q=0.8")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", u, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, u, truncateRunes(string(body), 500))
+	}
+
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if strings.Contains(ct, "html") || bytes.Contains(body[:min(len(body), 512)], []byte("<html")) {
+		return HTMLToMarkdown(string(body)), nil
+	}
+	return string(body), nil
 }
 
 // NewSearchTool builds the web_search tool.
@@ -130,8 +154,9 @@ func NewSearchTool(cfg config.WebConfig, client *http.Client) react.Tool {
 				results, err = searchBrave(ctx, client, cfg.SearchAPIKey, q, maxRes)
 			case "tavily":
 				results, err = searchTavily(ctx, client, cfg.SearchAPIKey, q, maxRes)
-			case "searxng":
-				results, err = searchSearXNG(ctx, client, cfg.SearxngURL, q, maxRes)
+			case "deepseek":
+				apiKey := resolveDeepSeekAPIKey(cfg.SearchAPIKey, cfg.FetchAPIKey)
+				results, err = searchDeepSeek(ctx, client, apiKey, q, maxRes)
 			default:
 				results, err = searchDuckDuckGo(ctx, client, q, maxRes)
 			}
@@ -351,37 +376,150 @@ func searchTavily(ctx context.Context, client *http.Client, apiKey, query string
 	return out, nil
 }
 
-func searchSearXNG(ctx context.Context, client *http.Client, baseURL, query string, maxResults int) ([]SearchResult, error) {
-	if baseURL == "" {
-		return nil, fmt.Errorf("searxng search requires web.searxng_url")
+func resolveDeepSeekAPIKey(primary, secondary string) string {
+	if k := strings.TrimSpace(primary); k != "" {
+		return k
 	}
-	u := strings.TrimRight(baseURL, "/") + "/search?format=json&q=" + url.QueryEscape(query)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if k := strings.TrimSpace(secondary); k != "" {
+		return k
+	}
+	return strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
+}
+
+func searchDeepSeek(ctx context.Context, client *http.Client, apiKey, query string, maxResults int) ([]SearchResult, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("deepseek search requires web.search_api_key or DEEPSEEK_API_KEY")
+	}
+	if runes := []rune(query); len(runes) > 128 {
+		query = string(runes[:128])
+	}
+	if maxResults < 1 {
+		maxResults = 6
+	}
+	if maxResults > 50 {
+		maxResults = 50
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"query": query,
+		"count": maxResults,
+	})
 	if err != nil {
 		return nil, err
 	}
+
+	endpoint := strings.TrimRight(deepseekBaseURL, "/") + "/v1/tools/search"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("deepseek search: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("deepseek search HTTP %d: %s", resp.StatusCode, parseDeepSeekError(body))
+	}
 
 	var parsed struct {
 		Results []struct {
 			Title   string `json:"title"`
 			URL     string `json:"url"`
+			Snippet string `json:"snippet"`
+			Summary string `json:"summary"`
 			Content string `json:"content"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, err
 	}
+
 	var out []SearchResult
-	for i, r := range parsed.Results {
-		if i >= maxResults {
-			break
+	for _, r := range parsed.Results {
+		snip := strings.TrimSpace(r.Summary)
+		if snip == "" {
+			snip = strings.TrimSpace(r.Snippet)
 		}
-		out = append(out, SearchResult{Title: r.Title, URL: r.URL, Snippet: r.Content})
+		out = append(out, SearchResult{
+			Title:   r.Title,
+			URL:     r.URL,
+			Snippet: snip,
+		})
 	}
 	return out, nil
 }
+
+func fetchDeepSeek(ctx context.Context, client *http.Client, apiKey, targetURL string) (string, error) {
+	if apiKey == "" {
+		return "", fmt.Errorf("deepseek fetch requires web.fetch_api_key, web.search_api_key, or DEEPSEEK_API_KEY")
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"url": targetURL,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	endpoint := strings.TrimRight(deepseekBaseURL, "/") + "/v1/tools/fetch"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("deepseek fetch %s: %w", targetURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("deepseek fetch HTTP %d from %s: %s", resp.StatusCode, targetURL, parseDeepSeekError(body))
+	}
+
+	var parsed struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+
+	title := strings.TrimSpace(parsed.Title)
+	content := strings.TrimSpace(parsed.Content)
+	if title != "" && content != "" && !strings.HasPrefix(content, "#") {
+		return "# " + title + "\n\n" + content, nil
+	}
+	if content != "" {
+		return content, nil
+	}
+	return title, nil
+}
+
+func parseDeepSeekError(body []byte) string {
+	var errResp struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &errResp); err == nil && strings.TrimSpace(errResp.Error.Message) != "" {
+		return strings.TrimSpace(errResp.Error.Message)
+	}
+	return truncateRunes(strings.TrimSpace(string(body)), 500)
+}
+

@@ -74,7 +74,7 @@ clapbot/
 │   │   ├── commands.go               # Unified slash commands (/new, /reset, /sessions, /workspace, /model, /compact, etc.)
 │   │   └── bus.go                    # Channel registry, proactive message/file sender, and live TurnEvent pub/sub
 │   ├── tools/
-│   │   ├── web/web.go                # web_fetch (HTML-to-Markdown) & web_search (DuckDuckGo, Brave, Tavily, SearXNG)
+│   │   ├── web/web.go                # web_fetch (HTML-to-Markdown, DeepSeek) & web_search (DuckDuckGo, Brave, Tavily, DeepSeek)
 │   │   ├── cron/scheduler.go         # Persistent cron & one-shot timer scheduler + schedule_* tools
 │   │   └── channel/channel.go        # channel_send_message & channel_send_file tools
 │   ├── mcp/

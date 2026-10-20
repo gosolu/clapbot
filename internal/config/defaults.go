@@ -74,9 +74,10 @@ allowed_users = [] # Feishu open_id / user_id allowlist (empty = allow all in pr
 stream_mode = "edit" # edit | final
 
 [web]
-search_provider = "duckduckgo" # duckduckgo | brave | tavily | searxng
+search_provider = "duckduckgo" # duckduckgo | brave | tavily | deepseek
 search_api_key = ""
-searxng_url = ""
+fetch_provider = ""            # direct | deepseek (defaults to deepseek when search_provider = "deepseek")
+fetch_api_key = ""
 
 [[subagents]]
 name = "researcher"
@@ -140,9 +141,10 @@ channels:
     stream_mode: edit          # edit | final
 
 web:
-  search_provider: duckduckgo  # duckduckgo | brave | tavily | searxng
+  search_provider: duckduckgo  # duckduckgo | brave | tavily | deepseek
   search_api_key: ""
-  searxng_url: ""
+  fetch_provider: ""           # direct | deepseek
+  fetch_api_key: ""
 
 subagents:
   - name: researcher

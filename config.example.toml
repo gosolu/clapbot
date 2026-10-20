@@ -108,12 +108,14 @@ stream_mode = "edit"
 # ------------------------------------------------------------------------------
 # Web Search & Web Fetch Configuration
 #
-# Supported search providers: duckduckgo, brave, tavily, searxng
+# Supported search providers: duckduckgo, brave, tavily, deepseek
+# Supported fetch providers: direct (default), deepseek (auto-enabled when search_provider = "deepseek")
 # ------------------------------------------------------------------------------
 [web]
 search_provider = "duckduckgo"
-# search_api_key = "${BRAVE_API_KEY}"   # Required if search_provider = "brave" or "tavily"
-# searxng_url = "http://localhost:8080" # Required if search_provider = "searxng"
+# search_api_key = "${DEEPSEEK_API_KEY}" # Required if search_provider = "brave", "tavily", or "deepseek"
+# fetch_provider = "direct"              # direct | deepseek
+# fetch_api_key = "${DEEPSEEK_API_KEY}"  # Optional override for DeepSeek Fetch API
 
 # ------------------------------------------------------------------------------
 # Sub-agents

@@ -19,7 +19,7 @@ Inspired by **OpenClaw**, **Nanobot**, and **ZeroClaw**.
   - **Human-Editable Markdown (`~/.clapbot/{SOUL,USER,MEMORY}.md` + `memory/*.md`):** Composed dynamically into the system prompt on every turn and updated via `memory_read`, `memory_save`, and `memory_search` tools.
 - **Proactive Cron & One-Shot Timers:** Persistent scheduler with `schedule_create`, `schedule_list`, and `schedule_delete` tools that wake the agent and push results to Telegram, Feishu, or CLI.
 - **Built-in Web, Channel & MCP Tools:**
-  - `web_fetch` (HTML-to-Markdown) and `web_search` (DuckDuckGo, Brave, Tavily, SearXNG).
+  - `web_fetch` (HTML-to-Markdown, DeepSeek Fetch) and `web_search` (DuckDuckGo, Brave, Tavily, DeepSeek).
   - `channel_send_message` and `channel_send_file` for proactive notifications and file delivery.
   - Native **MCP Client Plugin** (`stdio` and Streamable HTTP JSON-RPC 2.0) bridged via `react.Plugin`.
 - **OS Daemon Service Management:** Built-in `launchd` (macOS) and `systemd` (Linux) service installer (`clapbot service install|start|stop|status|logs`).
