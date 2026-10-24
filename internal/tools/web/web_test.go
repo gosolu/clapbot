@@ -86,7 +86,7 @@ func TestDeepSeekSearchAndFetch(t *testing.T) {
 		SearchAPIKey:   "sk-ds-test",
 	}
 
-	searchTool := NewSearchTool(cfg, srv.Client())
+	searchTool := NewSearchTool(WithConfig(cfg), WithHTTPClient(srv.Client()))
 	searchRes, err := searchTool.Call(context.Background(), json.RawMessage(`{"query":"DeepSeek V4 release","max_results":5}`))
 	if err != nil {
 		t.Fatalf("searchTool.Call failed: %v", err)
@@ -96,7 +96,7 @@ func TestDeepSeekSearchAndFetch(t *testing.T) {
 		t.Errorf("unexpected search output: %s", searchOut)
 	}
 
-	fetchTool := NewFetchTool(cfg, srv.Client())
+	fetchTool := NewFetchTool(WithConfig(cfg), WithHTTPClient(srv.Client()))
 	fetchRes, err := fetchTool.Call(context.Background(), json.RawMessage(`{"url":"https://example.com/article"}`))
 	if err != nil {
 		t.Fatalf("fetchTool.Call failed: %v", err)

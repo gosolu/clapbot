@@ -96,7 +96,7 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 	baseTools = append(baseTools, builtin.NewFilesystem(cfg.Workspace)...)
 	baseTools = append(baseTools, builtin.Shell(builtin.WithWorkDir(cfg.Workspace)))
 	baseTools = append(baseTools, mem.Tools()...)
-	baseTools = append(baseTools, web.Tools(cfg.Web, nil)...)
+	baseTools = append(baseTools, web.Tools(web.WithConfig(cfg.Web))...)
 	baseTools = append(baseTools, eng.scheduler.Tools()...)
 	baseTools = append(baseTools, channel.Tools(bus)...)
 
@@ -115,7 +115,7 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 		}
 		subTools := append([]react.Tool{}, builtin.NewFilesystem(cfg.Workspace)...)
 		subTools = append(subTools, builtin.Shell(builtin.WithWorkDir(cfg.Workspace)))
-		subTools = append(subTools, web.Tools(cfg.Web, nil)...)
+		subTools = append(subTools, web.Tools(web.WithConfig(cfg.Web))...)
 		subTools = append(subTools, mem.Tools()...)
 
 		subAgent, err := react.New(

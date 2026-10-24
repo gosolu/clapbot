@@ -37,22 +37,80 @@ type SearchResult struct {
 	Snippet string `json:"snippet"`
 }
 
-// Tools returns the web_fetch and web_search tools configured by WebConfig.
-func Tools(cfg config.WebConfig, client *http.Client) []react.Tool {
-	if client == nil {
-		client = &http.Client{Timeout: 25 * time.Second}
+// Option configures web_fetch and web_search tools.
+type Option func(*options)
+
+type options struct {
+	cfg    config.WebConfig
+	client *http.Client
+}
+
+// WithConfig sets the WebConfig for web_fetch and web_search.
+func WithConfig(cfg config.WebConfig) Option {
+	return func(o *options) {
+		o.cfg = cfg
 	}
+}
+
+// WithHTTPClient sets a custom *http.Client for web_fetch and web_search.
+func WithHTTPClient(client *http.Client) Option {
+	return func(o *options) {
+		o.client = client
+	}
+}
+
+// WithSearchProvider sets the search provider ("duckduckgo", "brave", "tavily", "deepseek").
+func WithSearchProvider(provider string) Option {
+	return func(o *options) {
+		o.cfg.SearchProvider = provider
+	}
+}
+
+// WithSearchAPIKey sets the API key used by the search provider.
+func WithSearchAPIKey(apiKey string) Option {
+	return func(o *options) {
+		o.cfg.SearchAPIKey = apiKey
+	}
+}
+
+// WithFetchProvider sets the fetch provider ("direct", "deepseek").
+func WithFetchProvider(provider string) Option {
+	return func(o *options) {
+		o.cfg.FetchProvider = provider
+	}
+}
+
+// WithFetchAPIKey sets the API key used by the fetch provider.
+func WithFetchAPIKey(apiKey string) Option {
+	return func(o *options) {
+		o.cfg.FetchAPIKey = apiKey
+	}
+}
+
+func resolveOptions(opts []Option) options {
+	var o options
+	for _, fn := range opts {
+		if fn != nil {
+			fn(&o)
+		}
+	}
+	if o.client == nil {
+		o.client = &http.Client{Timeout: 25 * time.Second}
+	}
+	return o
+}
+
+// Tools returns the web_fetch and web_search tools configured with the given Options.
+func Tools(opts ...Option) []react.Tool {
 	return []react.Tool{
-		NewFetchTool(cfg, client),
-		NewSearchTool(cfg, client),
+		NewFetchTool(opts...),
+		NewSearchTool(opts...),
 	}
 }
 
 // NewFetchTool builds the web_fetch tool.
-func NewFetchTool(cfg config.WebConfig, client *http.Client) react.Tool {
-	if client == nil {
-		client = &http.Client{Timeout: 25 * time.Second}
-	}
+func NewFetchTool(opts ...Option) react.Tool {
+	o := resolveOptions(opts)
 	return react.NewTool(
 		"web_fetch",
 		"Fetch an HTTP/HTTPS URL and extract clean readable text/markdown content.",
@@ -65,8 +123,8 @@ func NewFetchTool(cfg config.WebConfig, client *http.Client) react.Tool {
 				u = "https://" + u
 			}
 
-			fetchProvider := strings.ToLower(strings.TrimSpace(cfg.FetchProvider))
-			if fetchProvider == "" && strings.EqualFold(strings.TrimSpace(cfg.SearchProvider), "deepseek") {
+			fetchProvider := strings.ToLower(strings.TrimSpace(o.cfg.FetchProvider))
+			if fetchProvider == "" && strings.EqualFold(strings.TrimSpace(o.cfg.SearchProvider), "deepseek") {
 				fetchProvider = "deepseek"
 			}
 
@@ -76,10 +134,10 @@ func NewFetchTool(cfg config.WebConfig, client *http.Client) react.Tool {
 			)
 			switch fetchProvider {
 			case "deepseek":
-				apiKey := resolveDeepSeekAPIKey(cfg.FetchAPIKey, cfg.SearchAPIKey)
-				text, err = fetchDeepSeek(ctx, client, apiKey, u)
+				apiKey := resolveDeepSeekAPIKey(o.cfg.FetchAPIKey, o.cfg.SearchAPIKey)
+				text, err = fetchDeepSeek(ctx, o.client, apiKey, u)
 			default:
-				text, err = fetchDirect(ctx, client, u)
+				text, err = fetchDirect(ctx, o.client, u)
 			}
 			if err != nil {
 				return "", err
@@ -125,10 +183,8 @@ func fetchDirect(ctx context.Context, client *http.Client, u string) (string, er
 }
 
 // NewSearchTool builds the web_search tool.
-func NewSearchTool(cfg config.WebConfig, client *http.Client) react.Tool {
-	if client == nil {
-		client = &http.Client{Timeout: 25 * time.Second}
-	}
+func NewSearchTool(opts ...Option) react.Tool {
+	o := resolveOptions(opts)
 	return react.NewTool(
 		"web_search",
 		"Search the web for up-to-date information and return titles, URLs, and snippets.",
@@ -149,16 +205,16 @@ func NewSearchTool(cfg config.WebConfig, client *http.Client) react.Tool {
 				results []SearchResult
 				err     error
 			)
-			switch strings.ToLower(strings.TrimSpace(cfg.SearchProvider)) {
+			switch strings.ToLower(strings.TrimSpace(o.cfg.SearchProvider)) {
 			case "brave":
-				results, err = searchBrave(ctx, client, cfg.SearchAPIKey, q, maxRes)
+				results, err = searchBrave(ctx, o.client, o.cfg.SearchAPIKey, q, maxRes)
 			case "tavily":
-				results, err = searchTavily(ctx, client, cfg.SearchAPIKey, q, maxRes)
+				results, err = searchTavily(ctx, o.client, o.cfg.SearchAPIKey, q, maxRes)
 			case "deepseek":
-				apiKey := resolveDeepSeekAPIKey(cfg.SearchAPIKey, cfg.FetchAPIKey)
-				results, err = searchDeepSeek(ctx, client, apiKey, q, maxRes)
+				apiKey := resolveDeepSeekAPIKey(o.cfg.SearchAPIKey, o.cfg.FetchAPIKey)
+				results, err = searchDeepSeek(ctx, o.client, apiKey, q, maxRes)
 			default:
-				results, err = searchDuckDuckGo(ctx, client, q, maxRes)
+				results, err = searchDuckDuckGo(ctx, o.client, q, maxRes)
 			}
 			if err != nil {
 				return "", err
