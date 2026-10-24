@@ -19,7 +19,7 @@ import (
 	"github.com/gosolu/clapbot/internal/tools/web"
 	builtin_skills "github.com/gosolu/clapbot/skills/builtin"
 	"github.com/gosolu/react"
-	"github.com/gosolu/react/tools/builtin"
+	"github.com/gosolu/clapbot/internal/tools/builtin"
 )
 
 // TurnRequest describes an inbound user turn from any channel (CLI, Telegram, Feishu, Cron, Gateway).
