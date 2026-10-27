@@ -76,3 +76,77 @@ func TestRouterProfilesAndFallback(t *testing.T) {
 		t.Fatalf("expected 'response from default', got %q", respDef.Message.Text())
 	}
 }
+
+func TestBuildProviderGemini(t *testing.T) {
+	// Native Gemini API
+	pNative, err := buildProvider(config.ProfileConfig{
+		Provider: "gemini",
+		APIKey:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("buildProvider(gemini native): %v", err)
+	}
+	if pNative.Name() != "gemini" {
+		t.Fatalf("expected provider name 'gemini', got %q", pNative.Name())
+	}
+
+	// OpenAI-compatible Chat Completions endpoint
+	pChat, err := buildProvider(config.ProfileConfig{
+		Provider: "gemini",
+		APIKey:   "test-key",
+		WireAPI:  "chat",
+	})
+	if err != nil {
+		t.Fatalf("buildProvider(gemini chat): %v", err)
+	}
+	if pChat.Name() != "gemini" {
+		t.Fatalf("expected provider name 'gemini', got %q", pChat.Name())
+	}
+
+	// Provider alias "google"
+	pGoogle, err := buildProvider(config.ProfileConfig{
+		Provider: "google",
+		APIKey:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("buildProvider(google alias): %v", err)
+	}
+	if pGoogle.Name() != "gemini" {
+		t.Fatalf("expected provider name 'gemini', got %q", pGoogle.Name())
+	}
+
+	// API key fallback from GEMINI_API_KEY env
+	t.Setenv("GEMINI_API_KEY", "env-gemini-key")
+	pEnv, err := buildProvider(config.ProfileConfig{
+		Provider: "gemini",
+	})
+	if err != nil {
+		t.Fatalf("buildProvider(gemini env fallback): %v", err)
+	}
+	if pEnv.Name() != "gemini" {
+		t.Fatalf("expected provider name 'gemini', got %q", pEnv.Name())
+	}
+
+	// End-to-end NewRouter with gemini profile
+	cfg := &config.Config{
+		DefaultProfile: "gemini",
+		Profiles: map[string]config.ProfileConfig{
+			"gemini": {
+				Provider: "gemini",
+				Model:    "gemini-3.8-flash",
+				APIKey:   "test-gemini-key",
+			},
+		},
+	}
+	r, err := NewRouter(cfg)
+	if err != nil {
+		t.Fatalf("NewRouter with gemini profile: %v", err)
+	}
+	if !r.HasProfile("gemini") {
+		t.Fatalf("expected router to have gemini profile")
+	}
+	desc, ok := r.Describe("gemini")
+	if !ok || desc.Model != "gemini-3.8-flash" || desc.Provider != "gemini" {
+		t.Fatalf("unexpected describe info: %+v", desc)
+	}
+}

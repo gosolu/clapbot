@@ -89,6 +89,7 @@ func TestConfigExampleTOML(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test-key")
 	t.Setenv("DEEPSEEK_API_KEY", "sk-deepseek-key")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-key")
+	t.Setenv("GEMINI_API_KEY", "sk-gemini-key")
 
 	cfg, err := Load(tmp)
 	if err != nil {

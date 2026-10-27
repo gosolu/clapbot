@@ -36,7 +36,7 @@ gateway_addr = "127.0.0.1:8765"
 gateway_token = ""
 
 [profiles.default]
-provider = "openai" # openai | anthropic | deepseek | opencode
+provider = "openai" # openai | anthropic | deepseek | gemini | opencode
 model = "gpt-4o"
 api_key = "${OPENAI_API_KEY}"
 base_url = "" # Optional custom endpoint
@@ -55,6 +55,11 @@ api_key = "${DEEPSEEK_API_KEY}"
 provider = "anthropic"
 model = "claude-sonnet-4-5"
 api_key = "${ANTHROPIC_API_KEY}"
+
+[profiles.gemini]
+provider = "gemini"
+model = "gemini-3.8-flash"
+api_key = "${GEMINI_API_KEY}"
 
 [permissions]
 mode = "allow_all" # allow_all | rules
@@ -106,7 +111,7 @@ gateway_token: ""
 
 profiles:
   default:
-    provider: openai           # openai | anthropic | deepseek | opencode
+    provider: openai           # openai | anthropic | deepseek | gemini | opencode
     model: gpt-4o
     api_key: ${OPENAI_API_KEY}
     base_url: ""               # Optional custom endpoint
@@ -122,6 +127,10 @@ profiles:
     provider: anthropic
     model: claude-sonnet-4-5
     api_key: ${ANTHROPIC_API_KEY}
+  gemini:
+    provider: gemini
+    model: gemini-3.8-flash
+    api_key: ${GEMINI_API_KEY}
 
 permissions:
   mode: allow_all              # allow_all | rules

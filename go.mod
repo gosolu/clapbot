@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/coder/websocket v1.8.15
-	github.com/gosolu/react v0.1.8
+	github.com/gosolu/react v0.1.9
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/robfig/cron/v3 v3.0.1
 	golang.org/x/sys v0.48.0

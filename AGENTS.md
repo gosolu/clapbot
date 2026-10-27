@@ -62,7 +62,7 @@ clapbot/
 │   │   ├── config.go                 # ~/.clapbot/config.toml schema, loader, saver & ${ENV} expansion (with config.yaml compat)
 │   │   └── defaults.go               # Default SOUL.md, USER.md, MEMORY.md, and config.toml templates
 │   ├── provider/
-│   │   └── router.go                 # Multi-profile react.Provider wrapper (openai, anthropic, deepseek, opencode, mock)
+│   │   └── router.go                 # Multi-profile react.Provider wrapper (openai, anthropic, deepseek, gemini, opencode, mock)
 │   ├── store/
 │   │   ├── sqlite.go                 # SQLite react.Store + sessions, channel_bindings, and schedules tables
 │   │   └── fts.go                    # SQLite FTS5 & fallback search across memory entries and session history

@@ -31,7 +31,7 @@ gateway_token = ""
 # LLM Model Profiles
 #
 # Define one or more named profiles. Each profile specifies a provider and model.
-# Supported providers: openai, anthropic, deepseek, opencode, mock
+# Supported providers: openai, anthropic, deepseek, gemini, opencode, mock
 # Supported wire_api: chat (default: /v1/chat/completions), responses (/v1/responses)
 # ------------------------------------------------------------------------------
 [profiles.default]
@@ -55,6 +55,14 @@ api_key = "${DEEPSEEK_API_KEY}"
 provider = "anthropic"
 model = "claude-sonnet-4-5"
 api_key = "${ANTHROPIC_API_KEY}"
+
+# Example: Google Gemini profile (native v1beta or OpenAI-compatible mode)
+[profiles.gemini]
+provider = "gemini"
+model = "gemini-3.8-flash"
+api_key = "${GEMINI_API_KEY}"
+# base_url = "https://generativelanguage.googleapis.com/v1beta" # Optional custom endpoint
+# wire_api = "chat" # chat (OpenAI compatible) | native (default)
 
 # Example: Local LLM via Ollama or vLLM (using openai-compatible provider)
 [profiles.local]

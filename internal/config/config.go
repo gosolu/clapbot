@@ -28,7 +28,7 @@ type Config struct {
 
 // ProfileConfig defines a named LLM provider and model profile.
 type ProfileConfig struct {
-	Provider string `toml:"provider" yaml:"provider"` // openai | anthropic | deepseek | opencode | mock
+	Provider string `toml:"provider" yaml:"provider"` // openai | anthropic | deepseek | gemini | opencode | mock
 	Model    string `toml:"model" yaml:"model"`
 	APIKey   string `toml:"api_key" yaml:"api_key"`
 	BaseURL  string `toml:"base_url,omitempty" yaml:"base_url,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	rprovider "github.com/gosolu/react/provider"
 	"github.com/gosolu/react/provider/anthropic"
 	"github.com/gosolu/react/provider/deepseek"
+	"github.com/gosolu/react/provider/gemini"
 	"github.com/gosolu/react/provider/mock"
 	"github.com/gosolu/react/provider/openai"
 	"github.com/gosolu/react/provider/opencode"
@@ -78,6 +80,22 @@ func buildProvider(pcfg config.ProfileConfig) (react.Provider, error) {
 			BaseURL: pcfg.BaseURL,
 			APIType: apiType,
 		}), nil
+	case "gemini", "google":
+		apiKey := pcfg.APIKey
+		if apiKey == "" {
+			apiKey = os.Getenv("GEMINI_API_KEY")
+			if apiKey == "" {
+				apiKey = os.Getenv("GOOGLE_API_KEY")
+			}
+		}
+		gCfg := gemini.Config{
+			APIKey:  apiKey,
+			BaseURL: pcfg.BaseURL,
+		}
+		if strings.EqualFold(pcfg.WireAPI, "chat") || strings.EqualFold(pcfg.WireAPI, "chat_completions") || strings.EqualFold(pcfg.WireAPI, "openai") {
+			return gemini.NewChatCompletions(gCfg), nil
+		}
+		return gemini.New(gCfg), nil
 	case "opencode":
 		return opencode.New(opencode.Config{
 			APIKey:  pcfg.APIKey,

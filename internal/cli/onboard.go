@@ -43,6 +43,7 @@ func RunOnboarding(homeDir string) error {
 				Title("Default LLM Provider").
 				Description("Select your primary model provider (powered by gosolu/react)").
 				Options(
+					huh.NewOption("Google Gemini (Native / OpenAI)", "gemini"),
 					huh.NewOption("OpenAI / OpenAI-Compatible", "openai"),
 					huh.NewOption("Anthropic (Claude)", "anthropic"),
 					huh.NewOption("DeepSeek (V3 / R1 / Flash)", "deepseek"),
@@ -51,7 +52,7 @@ func RunOnboarding(homeDir string) error {
 				Value(&providerType),
 			huh.NewInput().
 				Title("Model Identifier").
-				Description("e.g. gpt-4o, claude-sonnet-4-5, deepseek-chat, deepseek-reasoner").
+				Description("e.g. gemini-3.8-flash, gpt-4o, claude-sonnet-4-5, deepseek-chat, deepseek-reasoner").
 				Value(&modelName),
 			huh.NewInput().
 				Title("API Key (or ${ENV_VAR})").
