@@ -29,7 +29,7 @@ Inspired by **OpenClaw**, **Nanobot**, and **ZeroClaw**.
 ## Quick Start
 
 ```bash
-# Build pure-Go binary
+# Build pure-Go binary (or run `make build`)
 CGO_ENABLED=0 go build -o clapbot ./cmd/clapbot
 
 # Run interactive onboarding wizard (configures provider, model, Telegram, Feishu)

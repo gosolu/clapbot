@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -161,6 +162,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.engine.HandleCommand(r.Context(), req)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "HTTP command error", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
@@ -175,6 +177,7 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	res, cmdRes, err := s.engine.RunTurn(r.Context(), req)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "HTTP turn error", "session_id", req.SessionID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
@@ -194,6 +197,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
 	})
 	if err != nil {
+		slog.ErrorContext(r.Context(), "websocket upgrade failed", "error", err)
 		return
 	}
 	defer func() { _ = conn.CloseNow() }()
@@ -207,6 +211,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 		cmdRes, err := s.engine.HandleCommand(ctx, req)
 		if err != nil {
+			slog.ErrorContext(ctx, "WS command error", "session_id", req.SessionID, "error", err)
 			_ = wsjson.Write(ctx, conn, WSFrame{Type: "error", ErrorMessage: err.Error()})
 			continue
 		}
@@ -217,6 +222,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 		for ev, err := range s.engine.StreamTurn(ctx, req) {
 			if err != nil {
+				slog.ErrorContext(ctx, "WS stream turn error", "session_id", req.SessionID, "error", err)
 				_ = wsjson.Write(ctx, conn, WSFrame{Type: "error", ErrorMessage: err.Error()})
 				break
 			}

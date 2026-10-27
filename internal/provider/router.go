@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -61,6 +62,7 @@ func buildProvider(pcfg config.ProfileConfig) (react.Provider, error) {
 	if strings.EqualFold(pcfg.WireAPI, "responses") {
 		apiType = rprovider.APITypeResponses
 	}
+
 	switch strings.ToLower(strings.TrimSpace(pcfg.Provider)) {
 	case "openai", "":
 		return openai.New(openai.Config{
@@ -211,18 +213,34 @@ func (r *Router) resolve(req *react.Request) (react.Provider, *react.Request, er
 func (r *Router) Generate(ctx context.Context, req *react.Request) (*react.Response, error) {
 	p, routedReq, err := r.resolve(req)
 	if err != nil {
+		slog.ErrorContext(ctx, "router resolve error", "target", req.Model, "error", err)
 		return nil, err
 	}
-	return p.Generate(ctx, routedReq)
+	resp, err := p.Generate(ctx, routedReq)
+	if err != nil {
+		slog.ErrorContext(ctx, "model generate error", "provider", p.Name(), "model", routedReq.Model, "error", err)
+		return nil, err
+	}
+	return resp, nil
 }
 
 // Stream implements react.Provider.
 func (r *Router) Stream(ctx context.Context, req *react.Request) iter.Seq2[react.StreamEvent, error] {
 	p, routedReq, err := r.resolve(req)
 	if err != nil {
+		slog.ErrorContext(ctx, "router resolve error", "target", req.Model, "error", err)
 		return func(yield func(react.StreamEvent, error) bool) {
 			yield(react.StreamEvent{}, err)
 		}
 	}
-	return p.Stream(ctx, routedReq)
+	return func(yield func(react.StreamEvent, error) bool) {
+		for ev, err := range p.Stream(ctx, routedReq) {
+			if err != nil {
+				slog.ErrorContext(ctx, "model stream error", "provider", p.Name(), "model", routedReq.Model, "error", err)
+			}
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
 }

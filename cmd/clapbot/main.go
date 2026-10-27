@@ -5,7 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -21,6 +23,8 @@ import (
 	"github.com/gosolu/clapbot/internal/runtime"
 	"github.com/gosolu/clapbot/internal/service"
 	"github.com/gosolu/clapbot/internal/store"
+	"github.com/gosolu/httpr"
+	"github.com/gosolu/xslog"
 )
 
 func main() {
@@ -31,6 +35,9 @@ func main() {
 }
 
 func run(args []string) error {
+	http.DefaultTransport = httpr.NewRoundTripper()
+	setupLogger("info", "text", true, "")
+
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
 		printUsage()
 		return nil
@@ -111,7 +118,7 @@ func runChat(args []string) error {
 		}
 	}
 
-	eng, cleanup, err := initEngine(cfg)
+	eng, cleanup, err := initEngine(cfg, false)
 	if err != nil {
 		return err
 	}
@@ -154,7 +161,7 @@ func executeSinglePrompt(homeDir, sessionID, workspace, prompt string) error {
 	if err != nil {
 		return err
 	}
-	eng, cleanup, err := initEngine(cfg)
+	eng, cleanup, err := initEngine(cfg, false)
 	if err != nil {
 		return err
 	}
@@ -200,7 +207,7 @@ func runServe(args []string) error {
 		cfg.GatewayAddr = *addr
 	}
 
-	eng, cleanup, err := initEngine(cfg)
+	eng, cleanup, err := initEngine(cfg, true)
 	if err != nil {
 		return err
 	}
@@ -225,10 +232,10 @@ func runServe(args []string) error {
 	if err := gw.Start(); err != nil {
 		return err
 	}
-	log.Printf("[clapbot] gateway listening on http://%s (home: %s)", gw.Addr(), cfg.HomeDir)
+	slog.InfoContext(ctx, "gateway listening", "url", "http://"+gw.Addr(), "home", cfg.HomeDir)
 
 	<-ctx.Done()
-	log.Printf("[clapbot] shutting down...")
+	slog.Info("shutting down...")
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = gw.Shutdown(shutCtx)
@@ -342,24 +349,87 @@ func runService(args []string) error {
 	}
 }
 
-func initEngine(cfg *config.Config) (*runtime.Engine, func(), error) {
+func initEngine(cfg *config.Config, enableFile bool) (*runtime.Engine, func(), error) {
+	logFile := ""
+	if enableFile || cfg.Logging.File != "" {
+		logFile = cfg.LogFile()
+	}
+	logCloser := setupLogger(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.Source || cfg.Logging.Level == "", logFile)
+
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {
+		if logCloser != nil {
+			_ = logCloser.Close()
+		}
 		return nil, nil, err
 	}
 	router, err := provider.NewRouter(cfg)
 	if err != nil {
 		_ = st.Close()
+		if logCloser != nil {
+			_ = logCloser.Close()
+		}
 		return nil, nil, err
 	}
 	eng, err := runtime.NewEngine(cfg, st, router)
 	if err != nil {
 		_ = st.Close()
+		if logCloser != nil {
+			_ = logCloser.Close()
+		}
 		return nil, nil, err
 	}
 	cleanup := func() {
 		_ = eng.Close()
 		_ = st.Close()
+		if logCloser != nil {
+			_ = logCloser.Close()
+		}
 	}
 	return eng, cleanup, nil
+}
+
+func setupLogger(levelStr, format string, addSource bool, logPath string) io.Closer {
+	var level slog.Level
+	switch strings.ToLower(strings.TrimSpace(levelStr)) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	var w io.Writer = os.Stderr
+	var closer io.Closer
+	if logPath != "" {
+		rot := xslog.NewRotateWriter(logPath,
+			xslog.WithMaxSize(100),
+			xslog.WithMaxBackups(5),
+			xslog.WithCompress(true),
+		)
+		closer = rot
+		w = io.MultiWriter(os.Stderr, rot)
+	}
+
+	hOpts := &slog.HandlerOptions{
+		AddSource: addSource,
+		Level:     level,
+		ReplaceAttr: xslog.ReplaceAttr(
+			xslog.AttrSimpleSource,
+			xslog.AttrLowerLevel,
+		),
+	}
+
+	var base slog.Handler
+	if strings.EqualFold(format, "json") {
+		base = slog.NewJSONHandler(w, hOpts)
+	} else {
+		base = slog.NewTextHandler(w, hOpts)
+	}
+
+	slog.SetDefault(slog.New(xslog.UseContext(base)))
+	return closer
 }

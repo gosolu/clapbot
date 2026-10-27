@@ -106,4 +106,3 @@ func TestConfigExampleTOML(t *testing.T) {
 		t.Errorf("expected 2 subagents, got %d", len(cfg.Subagents))
 	}
 }
-

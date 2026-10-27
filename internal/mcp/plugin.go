@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/gosolu/clapbot/internal/config"
@@ -36,14 +36,14 @@ func (p *Plugin) Init(ctx context.Context, r react.Registrar) error {
 		}
 		client, err := Connect(ctx, srvName, srvCfg)
 		if err != nil {
-			log.Printf("[mcp] warning: failed to connect server %q: %v", srvName, err)
+			slog.WarnContext(ctx, "failed to connect MCP server", "server", srvName, "error", err)
 			continue
 		}
 		p.clients = append(p.clients, client)
 
 		tools, err := client.ListTools(ctx)
 		if err != nil {
-			log.Printf("[mcp] warning: failed to list tools from %q: %v", srvName, err)
+			slog.WarnContext(ctx, "failed to list tools from MCP server", "server", srvName, "error", err)
 			continue
 		}
 		for _, td := range tools {
@@ -62,15 +62,17 @@ func (p *Plugin) Init(ctx context.Context, r react.Registrar) error {
 			tool := react.NewRawTool(spec, func(callCtx context.Context, args json.RawMessage) (react.ToolResult, error) {
 				out, isErr, err := c.CallTool(callCtx, origName, args)
 				if err != nil {
+					slog.ErrorContext(callCtx, "MCP tool execution error", "tool", qualifiedName, "error", err)
 					return react.ErrorResult(err.Error()), nil
 				}
 				if isErr {
+					slog.ErrorContext(callCtx, "MCP tool reported error", "tool", qualifiedName, "error", out)
 					return react.ErrorResult(out), nil
 				}
 				return react.TextResult(out), nil
 			})
 			if err := r.AddTool(tool); err != nil {
-				log.Printf("[mcp] warning: failed to register tool %q: %v", qualifiedName, err)
+				slog.WarnContext(ctx, "failed to register MCP tool", "tool", qualifiedName, "error", err)
 			}
 		}
 	}

@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gosolu/clapbot/internal/store"
 	"github.com/gosolu/react"
+	"github.com/gosolu/xslog"
 	"github.com/robfig/cron/v3"
 )
 
@@ -96,14 +98,20 @@ func (s *Scheduler) registerRuntime(sch store.Schedule) error {
 		}
 		schCopy := sch
 		s.timers[sch.ID] = time.AfterFunc(delay, func() {
+			jobCtx := xslog.ContextAppendAttrs(s.ctx,
+				slog.String("schedule_id", schCopy.ID),
+				slog.String("task", schCopy.Name),
+				slog.String("channel", schCopy.Channel),
+			)
+			slog.InfoContext(jobCtx, "timer fired")
 			s.mu.Lock()
 			delete(s.timers, schCopy.ID)
 			s.mu.Unlock()
 			if s.store != nil {
-				_ = s.store.MarkScheduleRun(s.ctx, schCopy.ID, true)
+				_ = s.store.MarkScheduleRun(jobCtx, schCopy.ID, true)
 			}
 			if s.trigger != nil {
-				s.trigger(s.ctx, schCopy)
+				s.trigger(jobCtx, schCopy)
 			}
 		})
 		return nil
@@ -112,14 +120,21 @@ func (s *Scheduler) registerRuntime(sch store.Schedule) error {
 	if sch.CronExpr != "" {
 		schCopy := sch
 		eid, err := s.cronEngine.AddFunc(sch.CronExpr, func() {
+			jobCtx := xslog.ContextAppendAttrs(s.ctx,
+				slog.String("schedule_id", schCopy.ID),
+				slog.String("task", schCopy.Name),
+				slog.String("channel", schCopy.Channel),
+			)
+			slog.InfoContext(jobCtx, "cron triggered")
 			if s.store != nil {
-				_ = s.store.MarkScheduleRun(s.ctx, schCopy.ID, false)
+				_ = s.store.MarkScheduleRun(jobCtx, schCopy.ID, false)
 			}
 			if s.trigger != nil {
-				s.trigger(s.ctx, schCopy)
+				s.trigger(jobCtx, schCopy)
 			}
 		})
 		if err != nil {
+			slog.ErrorContext(s.ctx, "invalid cron expression", "cron_expr", sch.CronExpr, "task", sch.Name, "error", err)
 			return fmt.Errorf("invalid cron expression %q: %w", sch.CronExpr, err)
 		}
 		s.cronIDs[sch.ID] = eid
@@ -152,6 +167,7 @@ func (s *Scheduler) Add(ctx context.Context, sch store.Schedule) (store.Schedule
 
 	if sch.CronExpr != "" {
 		if _, err := cron.ParseStandard(sch.CronExpr); err != nil {
+			slog.ErrorContext(ctx, "invalid 5-field cron_expr", "cron_expr", sch.CronExpr, "error", err)
 			return sch, fmt.Errorf("invalid 5-field cron_expr %q: %w", sch.CronExpr, err)
 		}
 	} else if sch.RunAt == nil {
@@ -160,12 +176,14 @@ func (s *Scheduler) Add(ctx context.Context, sch store.Schedule) (store.Schedule
 
 	if s.store != nil {
 		if err := s.store.SaveSchedule(ctx, sch); err != nil {
+			slog.ErrorContext(ctx, "failed to persist schedule", "name", sch.Name, "schedule_id", sch.ID, "error", err)
 			return sch, err
 		}
 	}
 	if err := s.registerRuntime(sch); err != nil {
 		return sch, err
 	}
+	slog.InfoContext(ctx, "scheduled task", "name", sch.Name, "schedule_id", sch.ID, "cron", sch.CronExpr, "run_at", sch.RunAt)
 	return sch, nil
 }
 
@@ -175,8 +193,12 @@ func (s *Scheduler) Remove(ctx context.Context, id string) error {
 	s.unregisterLocked(id)
 	s.mu.Unlock()
 	if s.store != nil {
-		return s.store.DeleteSchedule(ctx, id)
+		if err := s.store.DeleteSchedule(ctx, id); err != nil {
+			slog.ErrorContext(ctx, "failed to delete schedule", "schedule_id", id, "error", err)
+			return err
+		}
 	}
+	slog.InfoContext(ctx, "removed task", "schedule_id", id)
 	return nil
 }
 

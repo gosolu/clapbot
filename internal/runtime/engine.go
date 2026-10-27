@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,12 +14,13 @@ import (
 	"github.com/gosolu/clapbot/internal/memory"
 	"github.com/gosolu/clapbot/internal/provider"
 	"github.com/gosolu/clapbot/internal/store"
+	"github.com/gosolu/clapbot/internal/tools/builtin"
 	"github.com/gosolu/clapbot/internal/tools/channel"
 	"github.com/gosolu/clapbot/internal/tools/cron"
 	"github.com/gosolu/clapbot/internal/tools/web"
 	builtin_skills "github.com/gosolu/clapbot/skills/builtin"
 	"github.com/gosolu/react"
-	"github.com/gosolu/clapbot/internal/tools/builtin"
+	"github.com/gosolu/xslog"
 )
 
 // TurnRequest describes an inbound user turn from any channel (CLI, Telegram, Feishu, Cron, Gateway).
@@ -118,6 +119,23 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 		subTools = append(subTools, web.Tools(web.WithConfig(cfg.Web))...)
 		subTools = append(subTools, mem.Tools()...)
 
+		subHooks := react.Hooks{
+			BeforeTool: func(ctx context.Context, rc *react.RunContext, call *react.ToolCall) (react.HookDecision, error) {
+				slog.InfoContext(ctx, "invoke tool", "subagent", saCfg.Name, "session_id", rc.SessionID, "tool", call.Name, "args", string(call.Arguments))
+				return react.HookDecision{Action: react.HookContinue}, nil
+			},
+			AfterTool: func(ctx context.Context, rc *react.RunContext, call react.ToolCall, res *react.ToolResult) error {
+				if res != nil && res.IsError {
+					slog.ErrorContext(ctx, "tool error", "subagent", saCfg.Name, "session_id", rc.SessionID, "tool", call.Name, "error", res.Text())
+				}
+				return nil
+			},
+			OnToolFailure: func(ctx context.Context, rc *react.RunContext, call react.ToolCall, err error) error {
+				slog.ErrorContext(ctx, "tool failure", "subagent", saCfg.Name, "session_id", rc.SessionID, "tool", call.Name, "error", err)
+				return nil
+			},
+		}
+
 		subAgent, err := react.New(
 			react.WithName(saCfg.Name),
 			react.WithProvider(router),
@@ -125,6 +143,7 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 			react.WithSystemPrompt(saPrompt),
 			react.WithTools(subTools...),
 			react.WithPermission(policy, react.AlwaysApprove()),
+			react.WithHooks(subHooks),
 			react.WithMaxTurns(15),
 		)
 		if err == nil {
@@ -154,7 +173,15 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 			rc.Set(cron.ContextKeyWorkspace, ws)
 			rc.Set(cron.ContextKeyChannel, meta.Channel)
 			rc.Set(cron.ContextKeyChatID, meta.ChatID)
+			slog.InfoContext(ctx, "run start", "session_id", rc.SessionID, "channel", meta.Channel, "workspace", ws)
 			return nil
+		},
+		OnRunEnd: func(ctx context.Context, rc *react.RunContext, err error) {
+			if err != nil {
+				slog.ErrorContext(ctx, "run error", "session_id", rc.SessionID, "error", err)
+			} else {
+				slog.InfoContext(ctx, "run completed", "session_id", rc.SessionID)
+			}
 		},
 		BeforeModel: func(ctx context.Context, rc *react.RunContext, req *react.Request) error {
 			ws, _ := rc.Get(cron.ContextKeyWorkspace)
@@ -173,7 +200,49 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 			} else {
 				req.System = dyn
 			}
+			slog.InfoContext(ctx, "model request", "session_id", rc.SessionID, "model", req.Model, "messages", len(req.Messages), "tools", len(req.Tools))
 			return nil
+		},
+		AfterModel: func(ctx context.Context, rc *react.RunContext, resp *react.Response) error {
+			if resp != nil {
+				slog.InfoContext(ctx, "model response", "session_id", rc.SessionID, "stop_reason", string(resp.StopReason), "input_tokens", resp.Usage.InputTokens, "output_tokens", resp.Usage.OutputTokens, "tool_calls", len(resp.Message.ToolCalls))
+			}
+			return nil
+		},
+		BeforeTool: func(ctx context.Context, rc *react.RunContext, call *react.ToolCall) (react.HookDecision, error) {
+			slog.InfoContext(ctx, "invoke tool", "session_id", rc.SessionID, "tool", call.Name, "args", string(call.Arguments))
+			return react.HookDecision{Action: react.HookContinue}, nil
+		},
+		AfterTool: func(ctx context.Context, rc *react.RunContext, call react.ToolCall, res *react.ToolResult) error {
+			if res != nil && res.IsError {
+				slog.ErrorContext(ctx, "tool error", "session_id", rc.SessionID, "tool", call.Name, "error", res.Text())
+			} else if res != nil {
+				slog.DebugContext(ctx, "tool completed", "session_id", rc.SessionID, "tool", call.Name, "bytes", len(res.Text()))
+			}
+			return nil
+		},
+		OnToolFailure: func(ctx context.Context, rc *react.RunContext, call react.ToolCall, err error) error {
+			slog.ErrorContext(ctx, "tool failure", "session_id", rc.SessionID, "tool", call.Name, "error", err)
+			return nil
+		},
+		OnPermissionDenied: func(ctx context.Context, rc *react.RunContext, call react.ToolCall, reason string) {
+			slog.WarnContext(ctx, "tool permission denied", "session_id", rc.SessionID, "tool", call.Name, "reason", reason)
+		},
+		SubagentStart: func(ctx context.Context, rc *react.RunContext, agentName string, task string) {
+			slog.InfoContext(ctx, "subagent started", "agent", agentName, "session_id", rc.SessionID, "task", task)
+		},
+		SubagentStop: func(ctx context.Context, rc *react.RunContext, agentName string, task string, output string, err error) {
+			if err != nil {
+				slog.ErrorContext(ctx, "subagent failed", "agent", agentName, "session_id", rc.SessionID, "error", err)
+			} else {
+				slog.InfoContext(ctx, "subagent completed", "agent", agentName, "session_id", rc.SessionID)
+			}
+		},
+		PreCompact: func(ctx context.Context, rc *react.RunContext, messageCount int) {
+			slog.InfoContext(ctx, "compaction started", "session_id", rc.SessionID, "messages", messageCount)
+		},
+		PostCompact: func(ctx context.Context, rc *react.RunContext, beforeCount, afterCount int) {
+			slog.InfoContext(ctx, "compaction completed", "session_id", rc.SessionID, "before", beforeCount, "after", afterCount)
 		},
 	}
 
@@ -304,10 +373,15 @@ func (e *Engine) StreamTurn(ctx context.Context, req TurnRequest) iter.Seq2[reac
 	return func(yield func(react.Event, error) bool) {
 		sess, err := e.ensureSessionForTurn(ctx, req)
 		if err != nil {
+			slog.ErrorContext(ctx, "stream turn failed to resolve session", "error", err)
 			yield(react.Event{Type: react.EventError, Err: err}, err)
 			return
 		}
 		req.SessionID = sess.ID
+		ctx = xslog.ContextAppendAttrs(ctx,
+			slog.String("session_id", sess.ID),
+			slog.String("channel", req.Channel),
+		)
 		e.setTurnMeta(sess.ID, req)
 
 		// Build workspace-scoped file & shell tools for this session's bound workspace.
@@ -323,6 +397,9 @@ func (e *Engine) StreamTurn(ctx context.Context, req TurnRequest) iter.Seq2[reac
 		}
 
 		for ev, err := range e.agent.Stream(ctx, sess.ID, req.Input, runOpts...) {
+			if err != nil {
+				slog.ErrorContext(ctx, "stream turn error", "error", err)
+			}
 			e.bus.Publish(TurnEvent{
 				SessionID: sess.ID,
 				Channel:   req.Channel,
@@ -340,13 +417,22 @@ func (e *Engine) StreamTurn(ctx context.Context, req TurnRequest) iter.Seq2[reac
 func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) (*react.Result, CommandResult, error) {
 	sess, err := e.ensureSessionForTurn(ctx, req)
 	if err != nil {
+		slog.ErrorContext(ctx, "run turn failed to resolve session", "error", err)
 		return nil, CommandResult{}, err
 	}
 	req.SessionID = sess.ID
+	ctx = xslog.ContextAppendAttrs(ctx,
+		slog.String("session_id", sess.ID),
+		slog.String("channel", req.Channel),
+	)
 
 	cmdRes, err := e.HandleCommand(ctx, req)
-	if err != nil || cmdRes.Handled {
+	if err != nil {
+		slog.ErrorContext(ctx, "command error", "error", err)
 		return nil, cmdRes, err
+	}
+	if cmdRes.Handled {
+		return nil, cmdRes, nil
 	}
 
 	e.setTurnMeta(sess.ID, req)
@@ -370,6 +456,9 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) (*react.Result, C
 	}
 
 	res, err := e.agent.Run(ctx, sess.ID, req.Input, runOpts...)
+	if err != nil {
+		slog.ErrorContext(ctx, "run turn error", "error", err)
+	}
 	return res, CommandResult{}, err
 }
 
@@ -377,6 +466,7 @@ func (e *Engine) RunTurn(ctx context.Context, req TurnRequest) (*react.Result, C
 func (e *Engine) CompactSession(ctx context.Context, sessionID string) (bool, int, int, error) {
 	msgs, err := e.store.Load(ctx, sessionID)
 	if err != nil {
+		slog.ErrorContext(ctx, "failed to load session for compaction", "session_id", sessionID, "error", err)
 		return false, 0, 0, err
 	}
 	before := len(msgs)
@@ -386,12 +476,14 @@ func (e *Engine) CompactSession(ctx context.Context, sessionID string) (bool, in
 	// Force compaction by passing a tight budget to ContextSummarizer.Fit
 	compacted, err := e.summarizer.Fit(ctx, "", msgs, 1)
 	if err != nil {
+		slog.ErrorContext(ctx, "summarizer error during compaction", "session_id", sessionID, "error", err)
 		return false, before, before, err
 	}
 	if len(compacted) >= before {
 		return false, before, len(compacted), nil
 	}
 	if err := e.store.Replace(ctx, sessionID, compacted); err != nil {
+		slog.ErrorContext(ctx, "failed to persist compacted session", "session_id", sessionID, "error", err)
 		return false, before, before, err
 	}
 	return true, before, len(compacted), nil
@@ -413,7 +505,7 @@ func (e *Engine) onScheduledTrigger(ctx context.Context, sch store.Schedule) {
 		Input:     prompt,
 	})
 	if err != nil {
-		log.Printf("[scheduler] schedule %s failed: %v", sch.ID, err)
+		slog.ErrorContext(ctx, "scheduled task execution failed", "schedule_id", sch.ID, "name", sch.Name, "error", err)
 		return
 	}
 	if res != nil && strings.TrimSpace(res.Output) != "" && sch.Channel != "" && sch.ChatID != "" {

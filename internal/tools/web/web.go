@@ -7,14 +7,15 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/gosolu/clapbot/internal/config"
+	"github.com/gosolu/httpr"
 	"github.com/gosolu/react"
 )
 
@@ -41,21 +42,13 @@ type SearchResult struct {
 type Option func(*options)
 
 type options struct {
-	cfg    config.WebConfig
-	client *http.Client
+	cfg config.WebConfig
 }
 
 // WithConfig sets the WebConfig for web_fetch and web_search.
 func WithConfig(cfg config.WebConfig) Option {
 	return func(o *options) {
 		o.cfg = cfg
-	}
-}
-
-// WithHTTPClient sets a custom *http.Client for web_fetch and web_search.
-func WithHTTPClient(client *http.Client) Option {
-	return func(o *options) {
-		o.client = client
 	}
 }
 
@@ -93,9 +86,6 @@ func resolveOptions(opts []Option) options {
 		if fn != nil {
 			fn(&o)
 		}
-	}
-	if o.client == nil {
-		o.client = &http.Client{Timeout: 25 * time.Second}
 	}
 	return o
 }
@@ -135,11 +125,12 @@ func NewFetchTool(opts ...Option) react.Tool {
 			switch fetchProvider {
 			case "deepseek":
 				apiKey := resolveDeepSeekAPIKey(o.cfg.FetchAPIKey, o.cfg.SearchAPIKey)
-				text, err = fetchDeepSeek(ctx, o.client, apiKey, u)
+				text, err = fetchDeepSeek(ctx, apiKey, u)
 			default:
-				text, err = fetchDirect(ctx, o.client, u)
+				text, err = fetchDirect(ctx, u)
 			}
 			if err != nil {
+				slog.ErrorContext(ctx, "web fetch error", "url", u, "provider", fetchProvider, "error", err)
 				return "", err
 			}
 
@@ -153,7 +144,7 @@ func NewFetchTool(opts ...Option) react.Tool {
 	)
 }
 
-func fetchDirect(ctx context.Context, client *http.Client, u string) (string, error) {
+func fetchDirect(ctx context.Context, u string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", err
@@ -161,7 +152,7 @@ func fetchDirect(ctx context.Context, client *http.Client, u string) (string, er
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Clapbot/1.0)")
 	req.Header.Set("Accept", "text/markdown, text/html, application/xhtml+xml, text/plain;q=0.9, */*;q=0.8")
 
-	resp, err := client.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", u, err)
 	}
@@ -207,16 +198,17 @@ func NewSearchTool(opts ...Option) react.Tool {
 			)
 			switch strings.ToLower(strings.TrimSpace(o.cfg.SearchProvider)) {
 			case "brave":
-				results, err = searchBrave(ctx, o.client, o.cfg.SearchAPIKey, q, maxRes)
+				results, err = searchBrave(ctx, o.cfg.SearchAPIKey, q, maxRes)
 			case "tavily":
-				results, err = searchTavily(ctx, o.client, o.cfg.SearchAPIKey, q, maxRes)
+				results, err = searchTavily(ctx, o.cfg.SearchAPIKey, q, maxRes)
 			case "deepseek":
 				apiKey := resolveDeepSeekAPIKey(o.cfg.SearchAPIKey, o.cfg.FetchAPIKey)
-				results, err = searchDeepSeek(ctx, o.client, apiKey, q, maxRes)
+				results, err = searchDeepSeek(ctx, apiKey, q, maxRes)
 			default:
-				results, err = searchDuckDuckGo(ctx, o.client, q, maxRes)
+				results, err = searchDuckDuckGo(ctx, q, maxRes)
 			}
 			if err != nil {
+				slog.ErrorContext(ctx, "web search error", "query", q, "provider", o.cfg.SearchProvider, "error", err)
 				return "", err
 			}
 			if len(results) == 0 {
@@ -308,7 +300,7 @@ var (
 	reDDGSnippet = regexp.MustCompile(`(?is)<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>`)
 )
 
-func searchDuckDuckGo(ctx context.Context, client *http.Client, query string, maxResults int) ([]SearchResult, error) {
+func searchDuckDuckGo(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	form := url.Values{}
 	form.Set("q", query)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://html.duckduckgo.com/html/", strings.NewReader(form.Encode()))
@@ -318,7 +310,7 @@ func searchDuckDuckGo(ctx context.Context, client *http.Client, query string, ma
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
-	resp, err := client.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("duckduckgo search: %w", err)
 	}
@@ -357,7 +349,7 @@ func searchDuckDuckGo(ctx context.Context, client *http.Client, query string, ma
 	return out, nil
 }
 
-func searchBrave(ctx context.Context, client *http.Client, apiKey, query string, maxResults int) ([]SearchResult, error) {
+func searchBrave(ctx context.Context, apiKey, query string, maxResults int) ([]SearchResult, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("brave search requires web.search_api_key")
 	}
@@ -369,7 +361,7 @@ func searchBrave(ctx context.Context, client *http.Client, apiKey, query string,
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Subscription-Token", apiKey)
 
-	resp, err := client.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +386,7 @@ func searchBrave(ctx context.Context, client *http.Client, apiKey, query string,
 	return out, nil
 }
 
-func searchTavily(ctx context.Context, client *http.Client, apiKey, query string, maxResults int) ([]SearchResult, error) {
+func searchTavily(ctx context.Context, apiKey, query string, maxResults int) ([]SearchResult, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("tavily search requires web.search_api_key")
 	}
@@ -409,7 +401,7 @@ func searchTavily(ctx context.Context, client *http.Client, apiKey, query string
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +434,7 @@ func resolveDeepSeekAPIKey(primary, secondary string) string {
 	return strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
 }
 
-func searchDeepSeek(ctx context.Context, client *http.Client, apiKey, query string, maxResults int) ([]SearchResult, error) {
+func searchDeepSeek(ctx context.Context, apiKey, query string, maxResults int) ([]SearchResult, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("deepseek search requires web.search_api_key or DEEPSEEK_API_KEY")
 	}
@@ -472,7 +464,7 @@ func searchDeepSeek(ctx context.Context, client *http.Client, apiKey, query stri
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("deepseek search: %w", err)
 	}
@@ -514,7 +506,7 @@ func searchDeepSeek(ctx context.Context, client *http.Client, apiKey, query stri
 	return out, nil
 }
 
-func fetchDeepSeek(ctx context.Context, client *http.Client, apiKey, targetURL string) (string, error) {
+func fetchDeepSeek(ctx context.Context, apiKey, targetURL string) (string, error) {
 	if apiKey == "" {
 		return "", fmt.Errorf("deepseek fetch requires web.fetch_api_key, web.search_api_key, or DEEPSEEK_API_KEY")
 	}
@@ -534,7 +526,7 @@ func fetchDeepSeek(ctx context.Context, client *http.Client, apiKey, targetURL s
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("deepseek fetch %s: %w", targetURL, err)
 	}
@@ -578,4 +570,3 @@ func parseDeepSeekError(body []byte) string {
 	}
 	return truncateRunes(strings.TrimSpace(string(body)), 500)
 }
-

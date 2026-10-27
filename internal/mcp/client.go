@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gosolu/clapbot/internal/config"
+	"github.com/gosolu/httpr"
 )
 
 // ToolDef represents an MCP tool returned by tools/list.
@@ -56,16 +57,14 @@ type Client struct {
 	pending sync.Map // map[int64]chan rpcResponse
 
 	// HTTP transport fields
-	httpClient *http.Client
-	sessionID  string
+	sessionID string
 }
 
 // Connect establishes an MCP session and runs the initialize handshake.
 func Connect(ctx context.Context, name string, cfg config.MCPServerConfig) (*Client, error) {
 	c := &Client{
-		name:       name,
-		cfg:        cfg,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		name: name,
+		cfg:  cfg,
 	}
 	if strings.TrimSpace(cfg.URL) != "" {
 		if err := c.initHandshake(ctx); err != nil {
@@ -284,7 +283,7 @@ func (c *Client) callHTTP(ctx context.Context, rpcReq rpcRequest) (json.RawMessa
 		req.Header.Set(k, v)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, err
 	}

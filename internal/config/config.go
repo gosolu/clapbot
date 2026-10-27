@@ -18,6 +18,7 @@ type Config struct {
 	ContextBudget  int                        `toml:"context_budget" yaml:"context_budget"`
 	GatewayAddr    string                     `toml:"gateway_addr" yaml:"gateway_addr"`
 	GatewayToken   string                     `toml:"gateway_token,omitempty" yaml:"gateway_token,omitempty"`
+	Logging        LoggingConfig              `toml:"logging,omitempty" yaml:"logging,omitempty"`
 	Profiles       map[string]ProfileConfig   `toml:"profiles" yaml:"profiles"`
 	Permissions    PermissionsConfig          `toml:"permissions" yaml:"permissions"`
 	Channels       ChannelsConfig             `toml:"channels" yaml:"channels"`
@@ -41,6 +42,14 @@ type PermissionsConfig struct {
 	Allow []string `toml:"allow,omitempty" yaml:"allow,omitempty"`
 	Ask   []string `toml:"ask,omitempty" yaml:"ask,omitempty"`
 	Deny  []string `toml:"deny,omitempty" yaml:"deny,omitempty"`
+}
+
+// LoggingConfig configures structured logging with xslog.
+type LoggingConfig struct {
+	Level  string `toml:"level,omitempty" yaml:"level,omitempty"`   // debug | info | warn | error
+	Format string `toml:"format,omitempty" yaml:"format,omitempty"` // text | json
+	Source bool   `toml:"source,omitempty" yaml:"source,omitempty"` // include source file & line (shortened)
+	File   string `toml:"file,omitempty" yaml:"file,omitempty"`     // log file path (e.g. ~/.clapbot/logs/clapbot.log)
 }
 
 // ChannelsConfig configures chat app integrations.
@@ -301,8 +310,11 @@ func (c *Config) UploadsDir() string {
 	return filepath.Join(c.HomeDir, "uploads")
 }
 
-// LogFile returns ~/.clapbot/logs/clapbot.log.
+// LogFile returns ~/.clapbot/logs/clapbot.log (or configured logging.file).
 func (c *Config) LogFile() string {
+	if c.Logging.File != "" {
+		return ExpandPath(c.Logging.File)
+	}
 	return filepath.Join(c.HomeDir, "logs", "clapbot.log")
 }
 

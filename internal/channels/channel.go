@@ -3,11 +3,13 @@ package channels
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/gosolu/clapbot/internal/runtime"
 	"github.com/gosolu/react"
+	"github.com/gosolu/xslog"
 )
 
 // MessageTransport is implemented by Telegram and Feishu channel adapters to support
@@ -29,15 +31,24 @@ func ExecuteChannelTurn(
 	replyToMsgID string,
 	streamMode string,
 ) error {
+	ctx = xslog.ContextAppendAttrs(ctx,
+		slog.String("channel", req.Channel),
+		slog.String("chat_id", req.ChatID),
+	)
+
 	// 1. Check slash commands first.
 	if strings.HasPrefix(strings.TrimSpace(req.Input), "/") && len(req.Parts) == 0 {
 		cmdRes, err := eng.HandleCommand(ctx, req)
 		if err != nil {
+			slog.ErrorContext(ctx, "command error", "error", err)
 			_, _ = transport.SendInitial(ctx, req.ChatID, replyToMsgID, "❌ Error: "+err.Error())
 			return err
 		}
 		if cmdRes.Handled {
 			_, err := transport.SendInitial(ctx, req.ChatID, replyToMsgID, cmdRes.Output)
+			if err != nil {
+				slog.ErrorContext(ctx, "failed to send command output", "error", err)
+			}
 			return err
 		}
 	}
@@ -99,6 +110,7 @@ func ExecuteChannelTurn(
 
 	for ev, err := range eng.StreamTurn(ctx, req) {
 		if err != nil {
+			slog.ErrorContext(ctx, "turn error", "channel", req.Channel, "chat_id", req.ChatID, "session_id", req.SessionID, "error", err)
 			errMsg := fmt.Sprintf("❌ Error: %v", err)
 			if liveMsgID != "" {
 				_ = transport.EditMessage(ctx, req.ChatID, liveMsgID, errMsg)
@@ -150,9 +162,12 @@ func ExecuteChannelTurn(
 	}
 
 	if liveMsgID != "" {
-		_ = transport.EditMessage(ctx, req.ChatID, liveMsgID, chunks[0])
+		if err := transport.EditMessage(ctx, req.ChatID, liveMsgID, chunks[0]); err != nil {
+			slog.ErrorContext(ctx, "failed to edit final message", "channel", req.Channel, "chat_id", req.ChatID, "message_id", liveMsgID, "error", err)
+		}
 		for _, ch := range chunks[1:] {
 			if err := transport.SendChunk(ctx, req.ChatID, ch); err != nil {
+				slog.ErrorContext(ctx, "failed to send message chunk", "channel", req.Channel, "chat_id", req.ChatID, "error", err)
 				return err
 			}
 		}
@@ -160,10 +175,12 @@ func ExecuteChannelTurn(
 	}
 
 	if _, err := transport.SendInitial(ctx, req.ChatID, replyToMsgID, chunks[0]); err != nil {
+		slog.ErrorContext(ctx, "failed to send initial message", "channel", req.Channel, "chat_id", req.ChatID, "error", err)
 		return err
 	}
 	for _, ch := range chunks[1:] {
 		if err := transport.SendChunk(ctx, req.ChatID, ch); err != nil {
+			slog.ErrorContext(ctx, "failed to send message chunk", "channel", req.Channel, "chat_id", req.ChatID, "error", err)
 			return err
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -214,9 +215,11 @@ func EditFile(opts ...Option) react.Tool {
 
 			count := strings.Count(content, in.OldString)
 			if count == 0 {
+				slog.ErrorContext(ctx, "edit_file: old_string not found", "path", target)
 				return "", fmt.Errorf("old_string not found in %s", target)
 			}
 			if count > 1 {
+				slog.ErrorContext(ctx, "edit_file: old_string matches multiple occurrences", "count", count, "path", target)
 				return "", fmt.Errorf("old_string matches %d occurrences in %s; must be uniquely identifiable", count, target)
 			}
 
@@ -321,6 +324,7 @@ func Shell(opts ...Option) react.Tool {
 			}
 
 			if runErr != nil {
+				slog.ErrorContext(ctx, "shell command failed", "command", in.Command, "error", runErr)
 				if res.Len() > 0 {
 					return res.String(), fmt.Errorf("exit status: %w", runErr)
 				}
@@ -345,4 +349,3 @@ func NewFilesystem(baseDir string) []react.Tool {
 		ListDir(WithBaseDir(baseDir)),
 	}
 }
-

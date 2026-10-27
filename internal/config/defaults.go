@@ -65,6 +65,11 @@ api_key = "${GEMINI_API_KEY}"
 mode = "allow_all" # allow_all | rules
 deny = []          # Optional tool deny patterns, e.g. ["shell(rm -rf *)"]
 
+[logging]
+level = "info"     # debug | info | warn | error
+format = "text"    # text | json
+source = true      # include shortened source file:line
+
 [channels.telegram]
 enabled = false
 bot_token = "${TELEGRAM_BOT_TOKEN}"

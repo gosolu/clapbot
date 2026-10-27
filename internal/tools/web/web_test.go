@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,7 +87,7 @@ func TestDeepSeekSearchAndFetch(t *testing.T) {
 		SearchAPIKey:   "sk-ds-test",
 	}
 
-	searchTool := NewSearchTool(WithConfig(cfg), WithHTTPClient(srv.Client()))
+	searchTool := NewSearchTool(WithConfig(cfg))
 	searchRes, err := searchTool.Call(context.Background(), json.RawMessage(`{"query":"DeepSeek V4 release","max_results":5}`))
 	if err != nil {
 		t.Fatalf("searchTool.Call failed: %v", err)
@@ -96,7 +97,7 @@ func TestDeepSeekSearchAndFetch(t *testing.T) {
 		t.Errorf("unexpected search output: %s", searchOut)
 	}
 
-	fetchTool := NewFetchTool(WithConfig(cfg), WithHTTPClient(srv.Client()))
+	fetchTool := NewFetchTool(WithConfig(cfg))
 	fetchRes, err := fetchTool.Call(context.Background(), json.RawMessage(`{"url":"https://example.com/article"}`))
 	if err != nil {
 		t.Fatalf("fetchTool.Call failed: %v", err)
@@ -107,3 +108,29 @@ func TestDeepSeekSearchAndFetch(t *testing.T) {
 	}
 }
 
+func TestWebFetchWithHttprRetry(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 2 {
+			w.WriteHeader(http.StatusServiceUnavailable) // 503 triggers retry in httpr
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<h1>Success After Retry</h1>`))
+	}))
+	defer srv.Close()
+
+	// web_fetch tool uses httpr.Do directly
+	fetchTool := NewFetchTool()
+	res, err := fetchTool.Call(context.Background(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
+	if err != nil {
+		t.Fatalf("fetchTool call failed: %v", err)
+	}
+	if attempts < 2 {
+		t.Fatalf("expected at least 2 attempts from httpr, got %d", attempts)
+	}
+	if !strings.Contains(res.Text(), "Success After Retry") {
+		t.Errorf("expected response to contain 'Success After Retry', got: %s", res.Text())
+	}
+}

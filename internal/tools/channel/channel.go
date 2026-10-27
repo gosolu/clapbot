@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,7 @@ func Tools(sender Sender) []react.Tool {
 				return "", fmt.Errorf("channel is required when not running inside a channel context")
 			}
 			if err := sender.SendText(ctx, ch, cid, in.Text); err != nil {
+				slog.ErrorContext(ctx, "send message error", "channel", ch, "chat_id", cid, "error", err)
 				return "", err
 			}
 			return fmt.Sprintf("Sent message to %s:%s", ch, cid), nil
@@ -90,6 +92,7 @@ func Tools(sender Sender) []react.Tool {
 				return "", fmt.Errorf("stat file %s: %w", cleanPath, err)
 			}
 			if err := sender.SendFile(ctx, ch, cid, cleanPath, in.Caption); err != nil {
+				slog.ErrorContext(ctx, "send file error", "channel", ch, "chat_id", cid, "file", cleanPath, "error", err)
 				return "", err
 			}
 			return fmt.Sprintf("Sent file %s to %s:%s", filepath.Base(cleanPath), ch, cid), nil

@@ -1,7 +1,10 @@
 # Binaries
 /clapbot
+/dist/
 *.exe
 *.test
+coverage.out
+coverage.html
 
 # Local runtime data & logs
 *.db

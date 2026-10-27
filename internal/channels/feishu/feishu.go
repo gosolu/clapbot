@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -20,6 +20,8 @@ import (
 	"github.com/gosolu/clapbot/internal/channels"
 	"github.com/gosolu/clapbot/internal/config"
 	"github.com/gosolu/clapbot/internal/runtime"
+	"github.com/gosolu/httpr"
+	"github.com/gosolu/xslog"
 )
 
 // Bot implements the Feishu / Lark Bot channel using WebSocket long-connection mode
@@ -28,7 +30,6 @@ type Bot struct {
 	cfg        config.FeishuConfig
 	uploadsDir string
 	engine     *runtime.Engine
-	httpCli    *http.Client
 	domain     string
 
 	tokenMu     sync.Mutex
@@ -58,7 +59,6 @@ func New(cfg config.FeishuConfig, uploadsDir string, eng *runtime.Engine) *Bot {
 		cfg:        cfg,
 		uploadsDir: filepath.Join(uploadsDir, "feishu"),
 		engine:     eng,
-		httpCli:    &http.Client{Timeout: 30 * time.Second},
 		domain:     domain,
 		seenIDs:    map[string]time.Time{},
 	}
@@ -83,7 +83,7 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.wg.Go(func() {
 		b.wsLoop(cctx)
 	})
-	log.Printf("[feishu] started WebSocket long-connection channel")
+	slog.InfoContext(ctx, "started feishu websocket channel")
 	return nil
 }
 
@@ -116,7 +116,7 @@ func (b *Bot) getTenantToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -150,7 +150,7 @@ func (b *Bot) fetchWSEndpoint(ctx context.Context) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("locale", "zh")
-	resp, err := b.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -179,7 +179,7 @@ func (b *Bot) wsLoop(ctx context.Context) {
 		}
 		wsURL, err := b.fetchWSEndpoint(ctx)
 		if err != nil {
-			log.Printf("[feishu] fetch ws endpoint failed: %v", err)
+			slog.ErrorContext(ctx, "feishu fetch ws endpoint failed", "error", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -189,7 +189,7 @@ func (b *Bot) wsLoop(ctx context.Context) {
 		}
 
 		if err := b.runWSConnection(ctx, wsURL); err != nil && ctx.Err() == nil {
-			log.Printf("[feishu] ws connection closed: %v (reconnecting)", err)
+			slog.WarnContext(ctx, "feishu ws connection closed, reconnecting", "error", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -272,8 +272,15 @@ func (b *Bot) handleEventJSON(ctx context.Context, raw []byte) {
 	openID := env.Event.Sender.SenderID.OpenID
 	userID := env.Event.Sender.SenderID.UserID
 	chatID := env.Event.Message.ChatID
+
+	ctx = xslog.ContextAppendAttrs(ctx,
+		slog.String("channel", "feishu"),
+		slog.String("chat_id", chatID),
+		slog.String("message_id", msgID),
+	)
+
 	if !channels.IsAllowedUser(b.cfg.AllowedUsers, openID, userID, chatID) {
-		log.Printf("[feishu] ignored message from unauthorized open_id=%s", openID)
+		slog.WarnContext(ctx, "feishu ignored unauthorized message", "open_id", openID, "user_id", userID)
 		return
 	}
 
@@ -288,7 +295,7 @@ func (b *Bot) handleEventJSON(ctx context.Context, raw []byte) {
 	go func() {
 		sid, err := b.engine.ResolveChannelSession(ctx, "feishu", chatID)
 		if err != nil {
-			log.Printf("[feishu] resolve session error: %v", err)
+			slog.ErrorContext(ctx, "feishu resolve session error", "chat_id", chatID, "error", err)
 			return
 		}
 		turnReq := runtime.TurnRequest{
@@ -298,7 +305,9 @@ func (b *Bot) handleEventJSON(ctx context.Context, raw []byte) {
 			Input:            text,
 			DefaultWorkspace: b.engine.Config().Workspace,
 		}
-		_ = channels.ExecuteChannelTurn(ctx, b.engine, b, turnReq, msgID, b.cfg.StreamMode)
+		if err := channels.ExecuteChannelTurn(ctx, b.engine, b, turnReq, msgID, b.cfg.StreamMode); err != nil {
+			slog.ErrorContext(ctx, "feishu channel turn failed", "chat_id", chatID, "error", err)
+		}
 	}()
 }
 
@@ -344,7 +353,7 @@ func (b *Bot) EditMessage(ctx context.Context, _, messageID, text string) error 
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -410,7 +419,7 @@ func (b *Bot) SendFile(ctx context.Context, chatID, filePath, caption string) er
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	resp, err := b.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -462,7 +471,7 @@ func (b *Bot) sendRawMessage(ctx context.Context, chatID, msgType, content strin
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return "", err
 	}

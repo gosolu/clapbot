@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -167,12 +168,14 @@ func (m *Manager) Save(ctx context.Context, target, content, mode string) (strin
 	}
 
 	if err := os.WriteFile(path, []byte(finalContent), 0644); err != nil {
+		slog.ErrorContext(ctx, "failed to write memory file", "path", path, "target", target, "error", err)
 		return "", err
 	}
 
 	if m.store != nil {
 		_ = m.store.IndexMemoryEntry(ctx, sanitizeTopicName(target), finalContent, relSource)
 	}
+	slog.InfoContext(ctx, "saved memory", "source", relSource, "bytes", len(finalContent), "mode", mode)
 	return fmt.Sprintf("Saved memory to %s (%d bytes)", relSource, len(finalContent)), nil
 }
 

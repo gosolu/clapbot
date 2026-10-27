@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/gosolu/clapbot/internal/runtime"
 	"github.com/gosolu/clapbot/internal/store"
+	"github.com/gosolu/httpr"
 )
 
 // Client talks to a running local Gateway daemon over HTTP and WebSocket.
@@ -22,7 +23,6 @@ type Client struct {
 	baseURL string
 	wsURL   string
 	token   string
-	httpCli *http.Client
 }
 
 // NewClient constructs a Gateway Client for the given host:port address and optional auth token.
@@ -43,7 +43,6 @@ func NewClient(addr string, token ...string) *Client {
 		baseURL: addr,
 		wsURL:   wsURL,
 		token:   tok,
-		httpCli: &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
@@ -62,7 +61,7 @@ func (c *Client) Ping(ctx context.Context) bool {
 		return false
 	}
 	c.setAuth(req)
-	resp, err := c.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return false
 	}
@@ -77,7 +76,7 @@ func (c *Client) ListSessions(ctx context.Context) ([]store.Session, error) {
 		return nil, err
 	}
 	c.setAuth(req)
-	resp, err := c.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +107,7 @@ func (c *Client) ListProfiles(ctx context.Context) ([]ProfileItem, string, error
 		return nil, "", err
 	}
 	c.setAuth(req)
-	resp, err := c.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, "", err
 	}
@@ -135,7 +134,7 @@ func (c *Client) Command(ctx context.Context, turnReq runtime.TurnRequest) (runt
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuth(req)
-	resp, err := c.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return runtime.CommandResult{}, err
 	}

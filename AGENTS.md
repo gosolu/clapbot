@@ -27,6 +27,12 @@ CGO_ENABLED=0 go test -v ./internal/runtime/...
 
 # Start the local Gateway (HTTP/WS) + Scheduler + Telegram & Feishu channels
 ./clapbot serve
+
+# Alternatively via Makefile:
+make build          # Build pure-Go binary with CGO_ENABLED=0
+make test           # Run all unit and integration tests
+make test-cover     # Run tests with coverage summary
+make verify         # Run fmt-check, vet, and tests
 ```
 
 ---

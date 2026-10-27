@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -19,7 +19,9 @@ import (
 	"github.com/gosolu/clapbot/internal/channels"
 	"github.com/gosolu/clapbot/internal/config"
 	"github.com/gosolu/clapbot/internal/runtime"
+	"github.com/gosolu/httpr"
 	"github.com/gosolu/react"
+	"github.com/gosolu/xslog"
 )
 
 // Bot implements the Telegram Bot channel over pure HTTP long-polling.
@@ -27,7 +29,6 @@ type Bot struct {
 	cfg        config.TelegramConfig
 	uploadsDir string
 	engine     *runtime.Engine
-	httpCli    *http.Client
 	apiBase    string
 
 	mu     sync.Mutex
@@ -47,7 +48,6 @@ func New(cfg config.TelegramConfig, uploadsDir string, eng *runtime.Engine) *Bot
 		cfg:        cfg,
 		uploadsDir: filepath.Join(uploadsDir, "telegram"),
 		engine:     eng,
-		httpCli:    &http.Client{Timeout: 40 * time.Second},
 		apiBase:    "https://api.telegram.org/bot" + token,
 	}
 }
@@ -71,7 +71,7 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.wg.Go(func() {
 		b.pollLoop(cctx)
 	})
-	log.Printf("[telegram] started long-polling channel")
+	slog.InfoContext(ctx, "started telegram long-polling channel")
 	return nil
 }
 
@@ -131,7 +131,7 @@ func (b *Bot) pollLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("[telegram] getUpdates error: %v", err)
+			slog.ErrorContext(ctx, "telegram getUpdates error", "error", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -154,7 +154,7 @@ func (b *Bot) pollLoop(ctx context.Context) {
 			}
 			chatIDStr := strconv.FormatInt(msg.Chat.ID, 10)
 			if !channels.IsAllowedUser(b.cfg.AllowedUsers, uidStr, uname, chatIDStr) {
-				log.Printf("[telegram] ignored message from unauthorized user id=%s username=%s", uidStr, uname)
+				slog.WarnContext(ctx, "telegram ignored unauthorized user", "user_id", uidStr, "username", uname, "chat_id", chatIDStr)
 				continue
 			}
 
@@ -174,7 +174,7 @@ func (b *Bot) getUpdates(ctx context.Context, offset int64) ([]tgUpdate, error) 
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +196,11 @@ func (b *Bot) getUpdates(ctx context.Context, offset int64) ([]tgUpdate, error) 
 
 func (b *Bot) handleInbound(ctx context.Context, msg *tgMessage) {
 	chatID := strconv.FormatInt(msg.Chat.ID, 10)
+	ctx = xslog.ContextAppendAttrs(ctx,
+		slog.String("channel", "telegram"),
+		slog.String("chat_id", chatID),
+		slog.Int64("message_id", msg.MessageID),
+	)
 	text := strings.TrimSpace(msg.Text)
 	if text == "" {
 		text = strings.TrimSpace(msg.Caption)
@@ -211,6 +216,8 @@ func (b *Bot) handleInbound(ctx context.Context, msg *tgMessage) {
 			} else {
 				text += fmt.Sprintf("\n[Attached image saved at %s]", localPath)
 			}
+		} else {
+			slog.ErrorContext(ctx, "failed to download telegram photo", "file_id", bestPhoto.FileID, "error", err)
 		}
 	}
 	if msg.Document != nil {
@@ -224,6 +231,8 @@ func (b *Bot) handleInbound(ctx context.Context, msg *tgMessage) {
 			} else {
 				text += fmt.Sprintf("\n[Attached file saved at %s]", localPath)
 			}
+		} else {
+			slog.ErrorContext(ctx, "failed to download telegram document", "file_id", msg.Document.FileID, "error", err)
 		}
 	}
 
@@ -233,7 +242,7 @@ func (b *Bot) handleInbound(ctx context.Context, msg *tgMessage) {
 
 	sid, err := b.engine.ResolveChannelSession(ctx, "telegram", chatID)
 	if err != nil {
-		log.Printf("[telegram] resolve session error: %v", err)
+		slog.ErrorContext(ctx, "telegram resolve session error", "chat_id", chatID, "error", err)
 		return
 	}
 
@@ -246,14 +255,16 @@ func (b *Bot) handleInbound(ctx context.Context, msg *tgMessage) {
 		DefaultWorkspace: b.engine.Config().Workspace,
 	}
 
-	_ = channels.ExecuteChannelTurn(
+	if err := channels.ExecuteChannelTurn(
 		ctx,
 		b.engine,
 		b,
 		turnReq,
 		strconv.FormatInt(msg.MessageID, 10),
 		b.cfg.StreamMode,
-	)
+	); err != nil {
+		slog.ErrorContext(ctx, "telegram channel turn failed", "chat_id", chatID, "error", err)
+	}
 }
 
 func (b *Bot) downloadFile(ctx context.Context, fileID, fallbackName string) ([]byte, string, error) {
@@ -263,7 +274,7 @@ func (b *Bot) downloadFile(ctx context.Context, fileID, fallbackName string) ([]
 		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, "", err
 	}
@@ -284,7 +295,7 @@ func (b *Bot) downloadFile(ctx context.Context, fileID, fallbackName string) ([]
 	if err != nil {
 		return nil, "", err
 	}
-	dlResp, err := b.httpCli.Do(dlReq)
+	dlResp, err := httpr.Do(ctx, dlReq)
 	if err != nil {
 		return nil, "", err
 	}
@@ -390,7 +401,7 @@ func (b *Bot) SendFile(ctx context.Context, chatID, filePath, caption string) er
 		return err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	resp, err := b.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -409,7 +420,7 @@ func (b *Bot) callJSON(ctx context.Context, method string, payload map[string]an
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpCli.Do(req)
+	resp, err := httpr.Do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
