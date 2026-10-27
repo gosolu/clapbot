@@ -6,7 +6,7 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/coder/websocket v1.8.15
 	github.com/gosolu/httpr v0.2.0
-	github.com/gosolu/react v0.1.9
+	github.com/gosolu/react v0.1.10
 	github.com/gosolu/xslog v0.4.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/robfig/cron/v3 v3.0.1
