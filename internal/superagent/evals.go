@@ -2,6 +2,7 @@ package superagent
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -363,5 +364,146 @@ func (e *Engine) evaluateDueTx(tx Tx) error {
 			}
 		}
 	}
+	return nil
+}
+
+// policyChangedTx invalidates active evals, re-queues their triggers, and notifies open tickets of policy changes.
+func (e *Engine) policyChangedTx(tx Tx, fromVersion, toVersion string, effects map[string]PolicyEffect) error {
+	now := e.now()
+
+	// 1. Invalidate active evals and re-queue undecided triggers.
+	activeEvals, err := tx.FindActiveEvals()
+	if err != nil {
+		return err
+	}
+
+	for _, ev := range activeEvals {
+		th, err := tx.GetThread(ev.Thread)
+		if err != nil || th == nil {
+			continue
+		}
+
+		var requeuedIDs []string
+		for _, tid := range ev.Undecided() {
+			dec := &Decision{
+				ID:            GenerateID("dec"),
+				EvalID:        ev.ID,
+				Thread:        ev.Thread,
+				TriggerID:     tid,
+				Outcome:       OutcomeUnavailable,
+				Reason:        "policyChanged",
+				PolicyVersion: fromVersion,
+				At:            now,
+			}
+			if err := tx.SaveDecision(dec); err != nil {
+				return err
+			}
+			if ev.Decided == nil {
+				ev.Decided = make(map[string]string)
+			}
+			ev.Decided[tid] = dec.ID
+
+			tr, err := tx.GetTrigger(tid)
+			if err == nil && tr != nil {
+				tr.Disposition = DispositionQueued
+				_ = tx.SaveTrigger(tr)
+				requeuedIDs = append(requeuedIDs, tid)
+			}
+		}
+
+		ev.Status = EvalDone
+		if err := tx.SaveEval(ev); err != nil {
+			return err
+		}
+
+		th.EvalID = ""
+		// Prepend re-queued triggers to thread queue so they evaluate first
+		if len(requeuedIDs) > 0 {
+			var newQ []string
+			for _, rid := range requeuedIDs {
+				if !slices.Contains(th.Queue, rid) {
+					newQ = append(newQ, rid)
+				}
+			}
+			th.Queue = append(newQ, th.Queue...)
+		}
+
+		// If thread has queued triggers, start the next Eval under toVersion immediately
+		if len(th.Queue) > 0 {
+			nextBatch := th.Queue
+			th.Queue = nil
+			nextEval := &Eval{
+				ID:            GenerateID("eval"),
+				Thread:        th.Key,
+				TriggerIDs:    nextBatch,
+				Decided:       map[string]string{},
+				PolicyVersion: toVersion,
+				Status:        EvalPending,
+				CreatedAt:     now,
+			}
+			th.EvalID = nextEval.ID
+			if err := tx.SaveEval(nextEval); err != nil {
+				return err
+			}
+
+			if e.assessor != nil {
+				var trs []*TriggerRecord
+				for _, tid := range nextBatch {
+					if tRec, _ := tx.GetTrigger(tid); tRec != nil {
+						tRec.Disposition = DispositionEvaluating
+						_ = tx.SaveTrigger(tRec)
+						trs = append(trs, tRec)
+					}
+				}
+				allTickets, _ := tx.FindTicketsForThread(th.Key)
+				_ = e.assessor.Candidate(tx, nextEval, trs, allTickets)
+			}
+		}
+
+		if err := tx.SaveThread(th); err != nil {
+			return err
+		}
+	}
+
+	// 2. Notify affected open tickets.
+	openTickets, err := tx.ListOpenTickets()
+	if err != nil {
+		return err
+	}
+
+	// Sort tickets oldest first so deliveries queue in order of acceptance
+	slices.SortFunc(openTickets, func(a, b *Ticket) int {
+		return a.CreatedAt.Compare(b.CreatedAt)
+	})
+
+	for _, t := range openTickets {
+		effect, ok := effects[t.ID]
+		if !ok {
+			continue
+		}
+
+		msg := FormatPolicyMessage(effect)
+		in := &Input{
+			ID:        GenerateID("in"),
+			TicketID:  t.ID,
+			Kind:      InputPolicy,
+			Text:      msg,
+			Status:    InputPending,
+			CreatedAt: now,
+		}
+		if err := tx.SaveInput(in); err != nil {
+			return err
+		}
+
+		if t.AssignmentID != "" && e.executor != nil {
+			as, _ := tx.GetAssignment(t.AssignmentID)
+			if as != nil && as.Status == AssignmentRunning {
+				_ = e.executor.Deliver(tx, t.ID, as.ID, []string{in.ID}, false)
+				in.Status = InputQueued
+				_ = tx.SaveInput(in)
+			}
+		}
+	}
+
 	return nil
 }

@@ -19,6 +19,7 @@ type Tx interface {
 	GetEval(id string) (*Eval, error)
 	SaveEval(ev *Eval) error
 	FindDueEvals(now time.Time) ([]*Eval, error)
+	FindActiveEvals() ([]*Eval, error)
 	GetActiveEvalForThread(threadKey string) (*Eval, error)
 
 	// Decisions

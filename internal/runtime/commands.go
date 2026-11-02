@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gosolu/clapbot/internal/config"
+	"github.com/gosolu/clapbot/internal/superagent"
 )
 
 // CommandResult represents the outcome of a slash command.
@@ -60,6 +61,7 @@ func (e *Engine) HandleCommand(ctx context.Context, req TurnRequest) (CommandRes
 - ` + "`/model [profile]`" + ` — Show or switch the model profile
 - ` + "`/compact`" + ` — Summarize and compact current conversation history
 - ` + "`/schedules`" + ` — List active cron schedules and timers
+- ` + "`/policy`" + ` — Show or update super-agent accept mode and rules
 - ` + "`/tools`" + ` — List registered agent tools
 - ` + "`/skills`" + ` — List loaded progressive-disclosure skills
 - ` + "`/status`" + ` — Show session, model, workspace, and runtime status
@@ -307,6 +309,91 @@ func (e *Engine) HandleCommand(ctx context.Context, req TurnRequest) (CommandRes
 			Output: fmt.Sprintf("**Clapbot Status**\n- Session: `%s` (%d messages)\n- Profile: `%s` (%s / `%s`)\n- Workspace: `%s`\n- Home: `%s`\n- Tools: %d | Skills: %d",
 				sess.ID, sess.MessageCount, sess.Profile, pcfg.Provider, pcfg.Model, sess.WorkspaceDir, e.cfg.HomeDir, len(e.agent.Tools()), len(e.agent.Skills())),
 		}, nil
+
+	case "/policy":
+		if e.saEngine == nil || e.saPolicy == nil {
+			return CommandResult{
+				Handled: true,
+				Output:  "SuperAgent mode is not active.",
+			}, nil
+		}
+		cur := e.saPolicy.CurrentPolicy()
+		subFields := strings.Fields(args)
+		if len(subFields) == 0 {
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("**SuperAgent Policy** (version: `%s`)\n", cur.Version()))
+			b.WriteString(fmt.Sprintf("- **Accept Mode**: `%s`\n", cur.Mode()))
+			b.WriteString("- **Rules**:\n")
+			if len(cur.Rules) == 0 {
+				b.WriteString("  - *(none configured)*\n")
+			} else {
+				for _, r := range cur.Rules {
+					status := "disabled"
+					if r.Enabled {
+						status = "enabled"
+					}
+					b.WriteString(fmt.Sprintf("  - `%s`: %s — %s\n", r.Name, status, r.Instructions))
+				}
+			}
+			b.WriteString("- **Sources**:\n")
+			if len(cur.Sources) == 0 {
+				b.WriteString("  - *(none configured)*\n")
+			} else {
+				for sName, sp := range cur.Sources {
+					b.WriteString(fmt.Sprintf("  - **%s**: allowed=[%s] bots=[%s]\n", sName, strings.Join(sp.Allowed, ", "), strings.Join(sp.Bots, ", ")))
+				}
+			}
+			return CommandResult{Handled: true, Output: strings.TrimSpace(b.String())}, nil
+		}
+
+		subCmd := strings.ToLower(subFields[0])
+		switch subCmd {
+		case "mode":
+			if len(subFields) < 2 {
+				return CommandResult{Handled: true, Output: fmt.Sprintf("Current accept mode: `%s`. Usage: `/policy mode <off|observe|auto>`", cur.Mode())}, nil
+			}
+			newMode := superagent.AcceptMode(strings.ToLower(subFields[1]))
+			switch newMode {
+			case superagent.AcceptOff, superagent.AcceptObserve, superagent.AcceptAuto:
+			default:
+				return CommandResult{Handled: true, Output: "Invalid mode. Must be one of: `off`, `observe`, `auto`"}, nil
+			}
+			newPol := cur.WithAcceptMode(newMode)
+			oldVer := cur.Version()
+			if err := e.UpdateSuperAgentPolicy(ctx, newPol); err != nil {
+				return CommandResult{Handled: true}, err
+			}
+			return CommandResult{
+				Handled: true,
+				Output:  fmt.Sprintf("SuperAgent policy updated (version `%s` -> `%s`): accept mode is now `%s`.", oldVer, newPol.Version(), newMode),
+			}, nil
+
+		case "rule":
+			if len(subFields) < 3 {
+				return CommandResult{Handled: true, Output: "Usage: `/policy rule <name> <enable|disable>`"}, nil
+			}
+			ruleName := subFields[1]
+			enable := strings.EqualFold(subFields[2], "enable") || strings.EqualFold(subFields[2], "true") || strings.EqualFold(subFields[2], "1")
+			newPol := cur.WithRuleEnabled(ruleName, enable)
+			oldVer := cur.Version()
+			if err := e.UpdateSuperAgentPolicy(ctx, newPol); err != nil {
+				return CommandResult{Handled: true}, err
+			}
+			statusStr := "disabled"
+			if enable {
+				statusStr = "enabled"
+			}
+			return CommandResult{
+				Handled: true,
+				Output:  fmt.Sprintf("SuperAgent policy updated (version `%s` -> `%s`): rule `%s` is now %s.", oldVer, newPol.Version(), ruleName, statusStr),
+			}, nil
+
+		default:
+			return CommandResult{
+				Handled: true,
+				Output:  "Unknown /policy subcommand. Use `/policy`, `/policy mode <off|observe|auto>`, or `/policy rule <name> <enable|disable>`.",
+			}, nil
+		}
 
 	default:
 		return CommandResult{}, nil

@@ -81,3 +81,88 @@ func TestEngineTurnAndCommands(t *testing.T) {
 		t.Fatalf("expected /status output to mention test_s1, got: %s", statusCmd.Output)
 	}
 }
+
+func TestEngineSuperAgentPolicyCommands(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+
+	cfg, err := config.Load(tmp)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	cfg.Mode = "superagent"
+	cfg.SuperAgent = config.SuperAgentConfig{
+		AcceptMode: "observe",
+		Rules: []config.SuperAgentRule{
+			{Name: "bug_hunter", Instructions: "identify and report bugs", Enabled: true},
+		},
+	}
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	router, err := provider.NewRouter(cfg)
+	if err != nil {
+		t.Fatalf("NewRouter: %v", err)
+	}
+	mockProv := mock.New(mock.Text("ok"))
+	router.RegisterProfile("default", config.ProfileConfig{Provider: "mock", Model: "mock-1"}, mockProv)
+
+	eng, err := NewEngine(cfg, st, router)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	if !eng.IsSuperAgent() {
+		t.Fatalf("expected IsSuperAgent to be true")
+	}
+
+	// 1. Test /policy
+	cmdRes, err := eng.HandleCommand(ctx, TurnRequest{
+		SessionID: "s1",
+		Channel:   "cli",
+		Input:     "/policy",
+	})
+	if err != nil || !cmdRes.Handled {
+		t.Fatalf("/policy command failed: %v", err)
+	}
+	if !strings.Contains(cmdRes.Output, "observe") || !strings.Contains(cmdRes.Output, "bug_hunter") {
+		t.Fatalf("unexpected /policy output: %s", cmdRes.Output)
+	}
+
+	// 2. Test /policy mode auto
+	cmdRes, err = eng.HandleCommand(ctx, TurnRequest{
+		SessionID: "s1",
+		Channel:   "cli",
+		Input:     "/policy mode auto",
+	})
+	if err != nil || !cmdRes.Handled {
+		t.Fatalf("/policy mode command failed: %v", err)
+	}
+	if !strings.Contains(cmdRes.Output, "accept mode is now `auto`") {
+		t.Fatalf("unexpected /policy mode output: %s", cmdRes.Output)
+	}
+	if eng.SuperAgent().Policy().Mode() != "auto" {
+		t.Fatalf("expected policy mode to be auto, got %s", eng.SuperAgent().Policy().Mode())
+	}
+
+	// 3. Test /policy rule bug_hunter disable
+	cmdRes, err = eng.HandleCommand(ctx, TurnRequest{
+		SessionID: "s1",
+		Channel:   "cli",
+		Input:     "/policy rule bug_hunter disable",
+	})
+	if err != nil || !cmdRes.Handled {
+		t.Fatalf("/policy rule command failed: %v", err)
+	}
+	if !strings.Contains(cmdRes.Output, "rule `bug_hunter` is now disabled") {
+		t.Fatalf("unexpected /policy rule output: %s", cmdRes.Output)
+	}
+	if _, found := eng.SuperAgent().Policy().Rule("bug_hunter"); found {
+		t.Fatalf("expected bug_hunter rule to be disabled")
+	}
+}

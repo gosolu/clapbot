@@ -204,6 +204,35 @@ func (s *superagentTx) FindDueEvals(now time.Time) ([]*superagent.Eval, error) {
 	return out, rows.Err()
 }
 
+func (s *superagentTx) FindActiveEvals() ([]*superagent.Eval, error) {
+	rows, err := s.tx.Query(`
+		SELECT id, thread, trigger_ids_json, decided_json, policy_version, status, created_at, delivered_at, deadline
+		FROM sa_evals
+		WHERE status != 'done'`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*superagent.Eval
+	for rows.Next() {
+		var (
+			ev          superagent.Eval
+			triggersRaw string
+			decidedRaw  string
+		)
+		if err := rows.Scan(
+			&ev.ID, &ev.Thread, &triggersRaw, &decidedRaw, &ev.PolicyVersion, &ev.Status, &ev.CreatedAt, &ev.DeliveredAt, &ev.Deadline,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(triggersRaw), &ev.TriggerIDs)
+		_ = json.Unmarshal([]byte(decidedRaw), &ev.Decided)
+		out = append(out, &ev)
+	}
+	return out, rows.Err()
+}
+
 func (s *superagentTx) GetActiveEvalForThread(threadKey string) (*superagent.Eval, error) {
 	row := s.tx.QueryRow(`
 		SELECT id, thread, trigger_ids_json, decided_json, policy_version, status, created_at, delivered_at, deadline

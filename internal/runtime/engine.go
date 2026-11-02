@@ -49,6 +49,7 @@ type Engine struct {
 	summarizer *react.ContextSummarizer
 
 	saEngine *superagent.Engine
+	saPolicy *superagent.DynamicPolicyProvider
 	saPasses *superagent.Passes
 
 	turnMetaMu sync.RWMutex
@@ -313,12 +314,14 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 
 		outbox := superagent.NewTransactionalOutbox(time.Now)
 		saExec := executor.NewTransactionalExecutor(time.Now)
+		saPolicy := superagent.NewDynamicPolicyProvider(pol)
 
-		saEng := superagent.NewEngine(st, staticPolicyProvider{p: pol},
+		saEng := superagent.NewEngine(st, saPolicy,
 			superagent.WithOutbox(outbox),
 			superagent.WithExecutor(saExec),
 		)
 		eng.saEngine = saEng
+		eng.saPolicy = saPolicy
 
 		workerRunner := executor.NewWorkerRunner(executor.Config{
 			Engine:     saEng,
@@ -358,12 +361,17 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 	return eng, nil
 }
 
-type staticPolicyProvider struct {
-	p superagent.Policy
+// SuperAgentPolicy returns the dynamic policy provider (or nil if in chat mode).
+func (e *Engine) SuperAgentPolicy() *superagent.DynamicPolicyProvider {
+	return e.saPolicy
 }
 
-func (s staticPolicyProvider) CurrentPolicy() superagent.Policy {
-	return s.p
+// UpdateSuperAgentPolicy updates the active Policy and notifies affected components.
+func (e *Engine) UpdateSuperAgentPolicy(ctx context.Context, newPol superagent.Policy) error {
+	if e.saEngine == nil {
+		return fmt.Errorf("superagent mode is not active")
+	}
+	return e.saEngine.UpdatePolicy(ctx, newPol)
 }
 
 // Config returns the active Config.

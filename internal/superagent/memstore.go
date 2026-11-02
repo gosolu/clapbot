@@ -99,6 +99,17 @@ func (m *MemStore) FindDueEvals(now time.Time) ([]*Eval, error) {
 	return out, nil
 }
 
+func (m *MemStore) FindActiveEvals() ([]*Eval, error) {
+	var out []*Eval
+	for _, ev := range m.evals {
+		if ev.Status != EvalDone {
+			cp := *ev
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 func (m *MemStore) GetActiveEvalForThread(threadKey string) (*Eval, error) {
 	for _, ev := range m.evals {
 		if ev.Thread == threadKey && ev.Status != EvalDone {

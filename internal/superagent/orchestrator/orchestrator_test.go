@@ -2,9 +2,12 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/gosolu/clapbot/internal/superagent"
+	"github.com/gosolu/react"
 	"github.com/gosolu/react/provider/mock"
 )
 
@@ -97,5 +100,73 @@ func TestOrchestratorRouteAndIntake(t *testing.T) {
 	}
 	if openTickets[0].OriginTrigger != tr.ID {
 		t.Fatalf("expected origin trigger %s, got %s", tr.ID, openTickets[0].OriginTrigger)
+	}
+}
+
+func TestOrchestratorPolicyTools(t *testing.T) {
+	ctx := context.Background()
+	store := superagent.NewMemStore()
+	initialPol := superagent.Policy{
+		AcceptMode: superagent.AcceptObserve,
+		Rules: []superagent.Rule{
+			{Name: "r1", Instructions: "rule one", Enabled: true},
+		},
+	}
+	dynPol := superagent.NewDynamicPolicyProvider(initialPol)
+	eng := superagent.NewEngine(store, dynPol)
+
+	tools := NewOrchestratorTools(eng)
+	toolMap := make(map[string]react.Tool)
+	for _, tool := range tools {
+		toolMap[tool.Spec().Name] = tool
+	}
+
+	// 1. Test orchestrator_policy_get
+	getTool, ok := toolMap["orchestrator_policy_get"]
+	if !ok {
+		t.Fatalf("orchestrator_policy_get tool not found")
+	}
+	res, err := getTool.Call(ctx, json.RawMessage(`{}`))
+	if err != nil || res.IsError {
+		t.Fatalf("policy_get failed: %v, text=%s", err, res.Text())
+	}
+	out := res.Text()
+	if !strings.Contains(out, "observe") || !strings.Contains(out, "r1") {
+		t.Fatalf("unexpected policy_get output: %s", out)
+	}
+
+	// 2. Test orchestrator_policy_set_mode to auto
+	setModeTool, ok := toolMap["orchestrator_policy_set_mode"]
+	if !ok {
+		t.Fatalf("orchestrator_policy_set_mode tool not found")
+	}
+	res, err = setModeTool.Call(ctx, json.RawMessage(`{"mode":"auto"}`))
+	if err != nil || res.IsError {
+		t.Fatalf("policy_set_mode failed: %v, text=%s", err, res.Text())
+	}
+	out = res.Text()
+	if !strings.Contains(out, "accept mode is now auto") {
+		t.Fatalf("unexpected set_mode output: %s", out)
+	}
+	if eng.Policy().Mode() != superagent.AcceptAuto {
+		t.Fatalf("expected policy mode to be auto, got %s", eng.Policy().Mode())
+	}
+
+	// 3. Test orchestrator_policy_toggle_rule
+	toggleTool, ok := toolMap["orchestrator_policy_toggle_rule"]
+	if !ok {
+		t.Fatalf("orchestrator_policy_toggle_rule tool not found")
+	}
+	res, err = toggleTool.Call(ctx, json.RawMessage(`{"rule_name":"r1","enabled":false}`))
+	if err != nil || res.IsError {
+		t.Fatalf("policy_toggle_rule failed: %v, text=%s", err, res.Text())
+	}
+	out = res.Text()
+	if !strings.Contains(out, "rule r1 is now disabled") {
+		t.Fatalf("unexpected toggle output: %s", out)
+	}
+	r1, found := eng.Policy().Rule("r1")
+	if found {
+		t.Fatalf("expected r1 to not be found in EnabledRules, but got %+v", r1)
 	}
 }

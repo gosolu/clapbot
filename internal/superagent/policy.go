@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // AcceptMode controls what happens to inferred candidates.
@@ -218,4 +220,186 @@ func matchAny(list []string, ids []string) bool {
 
 func normID(s string) string {
 	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s)), "@")
+}
+
+// WithAcceptMode returns a copy of Policy with the specified AcceptMode.
+func (p Policy) WithAcceptMode(mode AcceptMode) Policy {
+	cp := p
+	cp.AcceptMode = mode
+	return cp
+}
+
+// WithRule returns a copy of Policy with the given rule added or updated.
+func (p Policy) WithRule(rule Rule) Policy {
+	cp := p
+	found := false
+	var newRules []Rule
+	for _, r := range p.Rules {
+		if strings.EqualFold(r.Name, rule.Name) {
+			newRules = append(newRules, rule)
+			found = true
+		} else {
+			newRules = append(newRules, r)
+		}
+	}
+	if !found {
+		newRules = append(newRules, rule)
+	}
+	cp.Rules = newRules
+	return cp
+}
+
+// WithRuleEnabled returns a copy of Policy with the named rule enabled or disabled.
+func (p Policy) WithRuleEnabled(name string, enabled bool) Policy {
+	cp := p
+	var newRules []Rule
+	for _, r := range p.Rules {
+		if strings.EqualFold(r.Name, name) {
+			r.Enabled = enabled
+		}
+		newRules = append(newRules, r)
+	}
+	cp.Rules = newRules
+	return cp
+}
+
+// RuleEffect describes how a policy rule change affects a ticket.
+type RuleEffect struct {
+	Name        string `json:"name"`
+	Change      string `json:"change"` // "changed" | "disabled"
+	Instruction string `json:"instruction,omitempty"`
+}
+
+// PolicyEffect describes how a policy change bears on an open ticket.
+type PolicyEffect struct {
+	Rules            []RuleEffect `json:"rules,omitempty"`
+	Proactive        *bool        `json:"proactive,omitempty"`         // false if inferred work is no longer accepted
+	RequesterAllowed *bool        `json:"requester_allowed,omitempty"` // false if requester may no longer start work
+	Requester        Actor        `json:"requester,omitempty"`
+}
+
+// FormatPolicyMessage formats a human-readable notice for an executor session
+// describing how policy changes affect a ticket.
+func FormatPolicyMessage(effect PolicyEffect) string {
+	var lines []string
+	lines = append(lines, "Policy change:")
+
+	for _, rule := range effect.Rules {
+		if rule.Change == "disabled" {
+			lines = append(lines, fmt.Sprintf("Rule %s, which this ticket was accepted under, no longer applies: finish only a change within it, or report dropped.", rule.Name))
+		} else {
+			lines = append(lines, fmt.Sprintf("Rule %s, which this ticket was accepted under, changed. Keep the remaining work within it as it reads now: %s", rule.Name, rule.Instruction))
+		}
+	}
+
+	if effect.Proactive != nil && !*effect.Proactive {
+		lines = append(lines, "Work inferred from a rule is no longer accepted, as the accept mode is no longer auto: finish only what is in progress within the assignment, or report dropped, and take on nothing new.")
+	}
+
+	if effect.RequesterAllowed != nil && !*effect.RequesterAllowed {
+		reqLabel := effect.Requester.Label()
+		if reqLabel == "" {
+			reqLabel = "the requester"
+		}
+		lines = append(lines, fmt.Sprintf("The sender this ticket is for, %s, may no longer start work here: finish the assignment within its scope, and take no new requests from them on it.", reqLabel))
+	}
+
+	if len(lines) == 1 {
+		return "Policy change: the access or admission rules changed. Check that the remaining work stays within the assignment."
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ComputePolicyEffects calculates how a transition from oldPol to newPol affects open tickets.
+func ComputePolicyEffects(tickets []*Ticket, oldPol, newPol Policy) map[string]PolicyEffect {
+	effects := make(map[string]PolicyEffect)
+	oldMode := oldPol.Mode()
+	newMode := newPol.Mode()
+
+	for _, t := range tickets {
+		if !t.Live() {
+			continue
+		}
+		var (
+			ruleEffects      []RuleEffect
+			proactive        *bool
+			requesterAllowed *bool
+		)
+
+		// 1. Check matched rules
+		for _, ruleName := range t.Mandate.MatchedRules {
+			oldRule, oldFound := oldPol.Rule(ruleName)
+			newRule, newFound := newPol.Rule(ruleName)
+
+			if oldFound && (!newFound || !newRule.Enabled) {
+				ruleEffects = append(ruleEffects, RuleEffect{
+					Name:   ruleName,
+					Change: "disabled",
+				})
+			} else if oldFound && newFound {
+				if oldRule.Instructions != newRule.Instructions {
+					ruleEffects = append(ruleEffects, RuleEffect{
+						Name:        ruleName,
+						Change:      "changed",
+						Instruction: newRule.Instructions,
+					})
+				}
+			}
+		}
+
+		// 2. Check proactive mode
+		if t.Mandate.Strength == StrengthInferred && oldMode == AcceptAuto && newMode != AcceptAuto {
+			val := false
+			proactive = &val
+		}
+
+		// 3. Check requester authorization
+		spOld := oldPol.Source(t.Mandate.Source)
+		spNew := newPol.Source(t.Mandate.Source)
+		if spOld.Listed(t.Mandate.Requester) && !spNew.Listed(t.Mandate.Requester) {
+			val := false
+			requesterAllowed = &val
+		}
+
+		if len(ruleEffects) > 0 || proactive != nil || requesterAllowed != nil {
+			effects[t.ID] = PolicyEffect{
+				Rules:            ruleEffects,
+				Proactive:        proactive,
+				RequesterAllowed: requesterAllowed,
+				Requester:        t.Mandate.Requester,
+			}
+		}
+	}
+	return effects
+}
+
+// MutablePolicyProvider is a PolicyProvider that supports dynamic updates at runtime.
+type MutablePolicyProvider interface {
+	PolicyProvider
+	SetPolicy(p Policy)
+}
+
+// DynamicPolicyProvider is a thread-safe PolicyProvider implementation.
+type DynamicPolicyProvider struct {
+	mu sync.RWMutex
+	p  Policy
+}
+
+// NewDynamicPolicyProvider constructs a DynamicPolicyProvider with initial policy.
+func NewDynamicPolicyProvider(initial Policy) *DynamicPolicyProvider {
+	return &DynamicPolicyProvider{p: initial}
+}
+
+// CurrentPolicy returns the active Policy.
+func (d *DynamicPolicyProvider) CurrentPolicy() Policy {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.p
+}
+
+// SetPolicy updates the active Policy.
+func (d *DynamicPolicyProvider) SetPolicy(p Policy) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.p = p
 }

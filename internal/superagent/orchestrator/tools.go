@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -50,6 +51,20 @@ type RetryArgs struct {
 // UnsubscribeArgs is the argument struct for orchestrator_thread_unsubscribe.
 type UnsubscribeArgs struct {
 	ThreadKey string `json:"thread_key" desc:"Thread key to unsubscribe from" required:"true"`
+}
+
+// PolicyGetArgs is the argument struct for orchestrator_policy_get.
+type PolicyGetArgs struct{}
+
+// PolicySetModeArgs is the argument struct for orchestrator_policy_set_mode.
+type PolicySetModeArgs struct {
+	Mode string `json:"mode" desc:"Accept mode: off | observe | auto" required:"true"`
+}
+
+// PolicyToggleRuleArgs is the argument struct for orchestrator_policy_toggle_rule.
+type PolicyToggleRuleArgs struct {
+	RuleName string `json:"rule_name" desc:"Name of the rule to update" required:"true"`
+	Enabled  bool   `json:"enabled" desc:"Whether the rule should be enabled"`
 }
 
 // NewOrchestratorTools constructs the management tools exposed to the main orchestrator agent.
@@ -169,6 +184,55 @@ func NewOrchestratorTools(eng *superagent.Engine) []react.Tool {
 		},
 	)
 
+	policyGetTool := react.NewTool("orchestrator_policy_get",
+		"Returns the current super-agent policy, including accept mode, version, rules, and sources.",
+		func(ctx context.Context, in PolicyGetArgs) (string, error) {
+			p := eng.Policy()
+			data, err := json.MarshalIndent(p, "", "  ")
+			if err != nil {
+				return "", err
+			}
+			return string(data), nil
+		},
+		react.ReadOnly(),
+	)
+
+	policySetModeTool := react.NewTool("orchestrator_policy_set_mode",
+		"Updates the super-agent accept mode (off, observe, auto). Triggers policy change notifications to open tickets and re-evaluates active candidates.",
+		func(ctx context.Context, in PolicySetModeArgs) (string, error) {
+			mode := superagent.AcceptMode(strings.ToLower(strings.TrimSpace(in.Mode)))
+			switch mode {
+			case superagent.AcceptOff, superagent.AcceptObserve, superagent.AcceptAuto:
+			default:
+				return "", fmt.Errorf("invalid accept mode %q (must be off, observe, or auto)", in.Mode)
+			}
+			cur := eng.Policy()
+			newPol := cur.WithAcceptMode(mode)
+			oldVer := cur.Version()
+			if err := eng.UpdatePolicy(ctx, newPol); err != nil {
+				return "", fmt.Errorf("update policy failed: %w", err)
+			}
+			return fmt.Sprintf("Policy updated (version %s -> %s): accept mode is now %s", oldVer, newPol.Version(), mode), nil
+		},
+	)
+
+	policyToggleRuleTool := react.NewTool("orchestrator_policy_toggle_rule",
+		"Enables or disables a specific policy rule. Triggers policy change notifications to open tickets.",
+		func(ctx context.Context, in PolicyToggleRuleArgs) (string, error) {
+			cur := eng.Policy()
+			newPol := cur.WithRuleEnabled(in.RuleName, in.Enabled)
+			oldVer := cur.Version()
+			if err := eng.UpdatePolicy(ctx, newPol); err != nil {
+				return "", fmt.Errorf("toggle rule failed: %w", err)
+			}
+			status := "disabled"
+			if in.Enabled {
+				status = "enabled"
+			}
+			return fmt.Sprintf("Policy updated (version %s -> %s): rule %s is now %s", oldVer, newPol.Version(), in.RuleName, status), nil
+		},
+	)
+
 	return []react.Tool{
 		routeTool,
 		replyTool,
@@ -176,5 +240,8 @@ func NewOrchestratorTools(eng *superagent.Engine) []react.Tool {
 		statusTool,
 		retryTool,
 		unsubscribeTool,
+		policyGetTool,
+		policySetModeTool,
+		policyToggleRuleTool,
 	}
 }

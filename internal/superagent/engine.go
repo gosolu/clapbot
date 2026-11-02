@@ -365,3 +365,43 @@ func (e *Engine) EvaluateDue(ctx context.Context) error {
 		return e.evaluateDueTx(tx)
 	})
 }
+
+// Policy returns the active Policy.
+func (e *Engine) Policy() Policy {
+	if e.policy == nil {
+		return Policy{}
+	}
+	return e.policy.CurrentPolicy()
+}
+
+// PolicyChanged notifies the engine that the policy changed from fromVersion to toVersion,
+// invalidating active evals and notifying open tickets affected by effects.
+func (e *Engine) PolicyChanged(ctx context.Context, fromVersion, toVersion string, effects map[string]PolicyEffect) error {
+	return e.repos.Transact(ctx, func(tx Tx) error {
+		return e.policyChangedTx(tx, fromVersion, toVersion, effects)
+	})
+}
+
+// UpdatePolicy updates the active policy, computes effects on open tickets, and applies policy change transitions.
+func (e *Engine) UpdatePolicy(ctx context.Context, newPolicy Policy) error {
+	oldPolicy := e.policy.CurrentPolicy()
+	fromVer := oldPolicy.Version()
+	toVer := newPolicy.Version()
+
+	if mut, ok := e.policy.(MutablePolicyProvider); ok {
+		mut.SetPolicy(newPolicy)
+	}
+
+	if fromVer == toVer {
+		return nil
+	}
+
+	return e.repos.Transact(ctx, func(tx Tx) error {
+		openTickets, err := tx.ListOpenTickets()
+		if err != nil {
+			return err
+		}
+		effects := ComputePolicyEffects(openTickets, oldPolicy, newPolicy)
+		return e.policyChangedTx(tx, fromVer, toVer, effects)
+	})
+}
