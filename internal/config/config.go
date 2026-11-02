@@ -23,8 +23,31 @@ type Config struct {
 	Permissions    PermissionsConfig          `toml:"permissions" yaml:"permissions"`
 	Channels       ChannelsConfig             `toml:"channels" yaml:"channels"`
 	Web            WebConfig                  `toml:"web" yaml:"web"`
+	Mode           string                     `toml:"mode,omitempty" yaml:"mode,omitempty"` // chat | superagent (default: chat)
+	SuperAgent     SuperAgentConfig           `toml:"superagent,omitempty" yaml:"superagent,omitempty"`
 	Subagents      []SubagentConfig           `toml:"subagents" yaml:"subagents"`
 	MCPServers     map[string]MCPServerConfig `toml:"mcp_servers" yaml:"mcp_servers"`
+}
+
+// SuperAgentConfig configures Clapbot's proactive super-agent mode.
+type SuperAgentConfig struct {
+	AcceptMode     string           `toml:"accept_mode,omitempty" yaml:"accept_mode,omitempty"` // off | observe | auto
+	MaxSlots       int              `toml:"max_slots,omitempty" yaml:"max_slots,omitempty"`     // concurrency limit (default: 3)
+	PrepareCommand string           `toml:"prepare_command,omitempty" yaml:"prepare_command,omitempty"`
+	WorkRoot       string           `toml:"work_root,omitempty" yaml:"work_root,omitempty"`
+	Rules          []SuperAgentRule `toml:"rules,omitempty" yaml:"rules,omitempty"`
+}
+
+// SuperAgentRule defines a proactive rule for autonomous work assessment.
+type SuperAgentRule struct {
+	Name         string `toml:"name" yaml:"name"`
+	Instructions string `toml:"instructions" yaml:"instructions"`
+	Enabled      bool   `toml:"enabled" yaml:"enabled"`
+}
+
+// IsSuperAgent reports whether superagent mode is active.
+func (c *Config) IsSuperAgent() bool {
+	return strings.EqualFold(strings.TrimSpace(c.Mode), "superagent")
 }
 
 // ProfileConfig defines a named LLM provider and model profile.
@@ -143,6 +166,7 @@ func EnsureLayout(homeDir string) error {
 		filepath.Join(homeDir, "memory"),
 		filepath.Join(homeDir, "skills"),
 		filepath.Join(homeDir, "workspace"),
+		filepath.Join(homeDir, "work"),
 		filepath.Join(homeDir, "logs"),
 		filepath.Join(homeDir, "uploads"),
 	}
@@ -261,6 +285,20 @@ func Load(homeDir string) (*Config, error) {
 	}
 	if cfg.Web.SearchProvider == "" {
 		cfg.Web.SearchProvider = "duckduckgo"
+	}
+	if cfg.Mode == "" {
+		cfg.Mode = "chat"
+	}
+	if cfg.SuperAgent.AcceptMode == "" {
+		cfg.SuperAgent.AcceptMode = "observe"
+	}
+	if cfg.SuperAgent.MaxSlots <= 0 {
+		cfg.SuperAgent.MaxSlots = 3
+	}
+	if cfg.SuperAgent.WorkRoot == "" {
+		cfg.SuperAgent.WorkRoot = filepath.Join(homeDir, "work")
+	} else {
+		cfg.SuperAgent.WorkRoot = ExpandPath(cfg.SuperAgent.WorkRoot)
 	}
 	return cfg, nil
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/gosolu/clapbot/internal/channels"
 	"github.com/gosolu/clapbot/internal/config"
 	"github.com/gosolu/clapbot/internal/runtime"
+	"github.com/gosolu/clapbot/internal/superagent"
 	"github.com/gosolu/httpr"
 	"github.com/gosolu/react"
 	"github.com/gosolu/xslog"
@@ -240,6 +241,11 @@ func (b *Bot) handleInbound(ctx context.Context, msg *tgMessage) {
 		return
 	}
 
+	if b.engine.IsSuperAgent() {
+		b.handleInboundSuperAgent(ctx, msg, text)
+		return
+	}
+
 	sid, err := b.engine.ResolveChannelSession(ctx, "telegram", chatID)
 	if err != nil {
 		slog.ErrorContext(ctx, "telegram resolve session error", "chat_id", chatID, "error", err)
@@ -264,6 +270,52 @@ func (b *Bot) handleInbound(ctx context.Context, msg *tgMessage) {
 		b.cfg.StreamMode,
 	); err != nil {
 		slog.ErrorContext(ctx, "telegram channel turn failed", "chat_id", chatID, "error", err)
+	}
+}
+
+func (b *Bot) handleInboundSuperAgent(ctx context.Context, msg *tgMessage, text string) {
+	chatID := strconv.FormatInt(msg.Chat.ID, 10)
+	var uidStr, uname string
+	if msg.From != nil {
+		uidStr = strconv.FormatInt(msg.From.ID, 10)
+		uname = msg.From.Username
+	}
+
+	addressed := superagent.AddressNone
+	if msg.Chat.Type == "private" {
+		addressed = superagent.AddressDirect
+	} else if strings.Contains(text, "@") || strings.HasPrefix(text, "/") {
+		addressed = superagent.AddressMention
+	}
+
+	threadKey := fmt.Sprintf("tg:%d", msg.Chat.ID)
+	tr := superagent.Trigger{
+		ID:        fmt.Sprintf("telegram:%d:%d", msg.Chat.ID, msg.MessageID),
+		Source:    "telegram",
+		Thread:    threadKey,
+		Scope:     chatID,
+		Actor: superagent.Actor{
+			ID:      uidStr,
+			Name:    uname,
+			Aliases: []string{uname},
+			Bot:     false,
+		},
+		Addressed: addressed,
+		Text:      text,
+		Channel: superagent.ChannelAddress{
+			Source:  "telegram",
+			ChatID:  chatID,
+			ReplyTo: strconv.FormatInt(msg.MessageID, 10),
+		},
+		At: time.Now(),
+	}
+
+	b.SendTyping(ctx, chatID)
+	res, err := b.engine.SuperAgent().Receive(ctx, tr)
+	if err != nil {
+		slog.ErrorContext(ctx, "telegram superagent receive error", "trigger_id", tr.ID, "error", err)
+	} else {
+		slog.InfoContext(ctx, "telegram superagent received trigger", "trigger_id", tr.ID, "disposition", string(res))
 	}
 }
 

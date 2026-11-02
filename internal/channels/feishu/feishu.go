@@ -20,6 +20,7 @@ import (
 	"github.com/gosolu/clapbot/internal/channels"
 	"github.com/gosolu/clapbot/internal/config"
 	"github.com/gosolu/clapbot/internal/runtime"
+	"github.com/gosolu/clapbot/internal/superagent"
 	"github.com/gosolu/httpr"
 	"github.com/gosolu/xslog"
 )
@@ -249,9 +250,16 @@ type feishuEventEnvelope struct {
 		} `json:"sender"`
 		Message struct {
 			MessageID   string `json:"message_id"`
+			RootID      string `json:"root_id,omitempty"`
+			ParentID    string `json:"parent_id,omitempty"`
 			ChatID      string `json:"chat_id"`
+			ChatType    string `json:"chat_type,omitempty"`
 			MessageType string `json:"message_type"`
 			Content     string `json:"content"`
+			Mentions    []struct {
+				Key  string `json:"key"`
+				Name string `json:"name"`
+			} `json:"mentions,omitempty"`
 		} `json:"message"`
 	} `json:"event"`
 }
@@ -292,6 +300,11 @@ func (b *Bot) handleEventJSON(ctx context.Context, raw []byte) {
 		return
 	}
 
+	if b.engine.IsSuperAgent() {
+		b.handleEventSuperAgent(ctx, env, msgID, text)
+		return
+	}
+
 	go func() {
 		sid, err := b.engine.ResolveChannelSession(ctx, "feishu", chatID)
 		if err != nil {
@@ -309,6 +322,52 @@ func (b *Bot) handleEventJSON(ctx context.Context, raw []byte) {
 			slog.ErrorContext(ctx, "feishu channel turn failed", "chat_id", chatID, "error", err)
 		}
 	}()
+}
+
+func (b *Bot) handleEventSuperAgent(ctx context.Context, env feishuEventEnvelope, msgID, text string) {
+	openID := env.Event.Sender.SenderID.OpenID
+	userID := env.Event.Sender.SenderID.UserID
+	chatID := env.Event.Message.ChatID
+
+	addressed := superagent.AddressNone
+	if env.Event.Message.ChatType == "p2p" {
+		addressed = superagent.AddressDirect
+	} else if len(env.Event.Message.Mentions) > 0 || strings.Contains(text, "@") {
+		addressed = superagent.AddressMention
+	}
+
+	threadKey := fmt.Sprintf("feishu:%s", chatID)
+	if env.Event.Message.RootID != "" {
+		threadKey = fmt.Sprintf("feishu:%s:%s", chatID, env.Event.Message.RootID)
+	}
+
+	tr := superagent.Trigger{
+		ID:        fmt.Sprintf("feishu:%s", msgID),
+		Source:    "feishu",
+		Thread:    threadKey,
+		Scope:     chatID,
+		Actor: superagent.Actor{
+			ID:      openID,
+			Aliases: []string{userID},
+			Bot:     false,
+		},
+		Addressed: addressed,
+		Text:      text,
+		Channel: superagent.ChannelAddress{
+			Source:  "feishu",
+			ChatID:  chatID,
+			ReplyTo: msgID,
+		},
+		At: time.Now(),
+	}
+
+	b.SendTyping(ctx, chatID)
+	res, err := b.engine.SuperAgent().Receive(ctx, tr)
+	if err != nil {
+		slog.ErrorContext(ctx, "feishu superagent receive error", "trigger_id", tr.ID, "error", err)
+	} else {
+		slog.InfoContext(ctx, "feishu superagent received trigger", "trigger_id", tr.ID, "disposition", string(res))
+	}
 }
 
 func (b *Bot) isDuplicate(msgID string) bool {

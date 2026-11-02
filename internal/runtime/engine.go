@@ -8,12 +8,16 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gosolu/clapbot/internal/config"
 	"github.com/gosolu/clapbot/internal/mcp"
 	"github.com/gosolu/clapbot/internal/memory"
 	"github.com/gosolu/clapbot/internal/provider"
 	"github.com/gosolu/clapbot/internal/store"
+	"github.com/gosolu/clapbot/internal/superagent"
+	"github.com/gosolu/clapbot/internal/superagent/executor"
+	"github.com/gosolu/clapbot/internal/superagent/orchestrator"
 	"github.com/gosolu/clapbot/internal/tools/builtin"
 	"github.com/gosolu/clapbot/internal/tools/channel"
 	"github.com/gosolu/clapbot/internal/tools/cron"
@@ -43,6 +47,9 @@ type Engine struct {
 	bus        *Bus
 	agent      *react.Agent
 	summarizer *react.ContextSummarizer
+
+	saEngine *superagent.Engine
+	saPasses *superagent.Passes
 
 	turnMetaMu sync.RWMutex
 	turnMeta   map[string]TurnRequest
@@ -268,7 +275,95 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 		return nil, fmt.Errorf("create react agent: %w", err)
 	}
 	eng.agent = ag
+
+	if cfg.IsSuperAgent() {
+		sourcesPolicy := map[string]superagent.SourcePolicy{
+			"telegram": {
+				Allowed: cfg.Channels.Telegram.AllowedUsers,
+				Default: superagent.Admission{
+					ListedUnaddressed:   superagent.CellInferred,
+					UnlistedAddressed:   superagent.CellIgnore,
+					UnlistedUnaddressed: superagent.CellIgnore,
+				},
+			},
+			"feishu": {
+				Allowed: cfg.Channels.Feishu.AllowedUsers,
+				Default: superagent.Admission{
+					ListedUnaddressed:   superagent.CellInferred,
+					UnlistedAddressed:   superagent.CellIgnore,
+					UnlistedUnaddressed: superagent.CellIgnore,
+				},
+			},
+		}
+
+		var rules []superagent.Rule
+		for _, r := range cfg.SuperAgent.Rules {
+			rules = append(rules, superagent.Rule{
+				Name:         r.Name,
+				Instructions: r.Instructions,
+				Enabled:      r.Enabled,
+			})
+		}
+
+		pol := superagent.Policy{
+			AcceptMode: superagent.AcceptMode(cfg.SuperAgent.AcceptMode),
+			Sources:    sourcesPolicy,
+			Rules:      rules,
+		}
+
+		outbox := superagent.NewTransactionalOutbox(time.Now)
+		saExec := executor.NewTransactionalExecutor(time.Now)
+
+		saEng := superagent.NewEngine(st, staticPolicyProvider{p: pol},
+			superagent.WithOutbox(outbox),
+			superagent.WithExecutor(saExec),
+		)
+		eng.saEngine = saEng
+
+		workerRunner := executor.NewWorkerRunner(executor.Config{
+			Engine:     saEng,
+			Repos:      st,
+			Provider:   router,
+			Model:      cfg.DefaultProfile,
+			Store:      st,
+			WorkRoot:   cfg.SuperAgent.WorkRoot,
+			PrepareCmd: cfg.SuperAgent.PrepareCommand,
+			MaxSlots:   cfg.SuperAgent.MaxSlots,
+		})
+
+		orch, err := orchestrator.New(orchestrator.Config{
+			Engine:   saEng,
+			Provider: router,
+			Model:    cfg.DefaultProfile,
+			Store:    st,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create orchestrator: %w", err)
+		}
+		saEng.SetAssessor(orch)
+
+		effectRunner := superagent.NewEffectRunner(st, superagent.EffectHandlers{
+			Relay:   orch.HandleRelay,
+			Launch:  workerRunner.HandleLaunch,
+			Deliver: workerRunner.HandleDeliver,
+			End:     workerRunner.HandleEnd,
+			Reply: func(ctx context.Context, p superagent.ReplyPayload) error {
+				return bus.SendText(ctx, p.Channel.Source, p.Channel.ChatID, p.Text)
+			},
+		}, time.Now)
+
+		eng.saPasses = superagent.NewPasses(effectRunner, saEng)
+	}
+
 	return eng, nil
+}
+
+type staticPolicyProvider struct {
+	p superagent.Policy
+}
+
+func (s staticPolicyProvider) CurrentPolicy() superagent.Policy {
+	return s.p
 }
 
 // Config returns the active Config.
@@ -297,6 +392,11 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err := e.scheduler.Start(ctx); err != nil {
 		return err
 	}
+	if e.saPasses != nil {
+		if err := e.saPasses.Start(ctx, 2*time.Second); err != nil {
+			return fmt.Errorf("start superagent passes: %w", err)
+		}
+	}
 	for _, ch := range e.bus.Channels() {
 		if err := ch.Start(ctx); err != nil {
 			return fmt.Errorf("start channel %s: %w", ch.Name(), err)
@@ -307,6 +407,9 @@ func (e *Engine) Start(ctx context.Context) error {
 
 // Close shuts down channels, scheduler, agent plugins, and store.
 func (e *Engine) Close() error {
+	if e.saPasses != nil {
+		e.saPasses.Stop()
+	}
 	for _, ch := range e.bus.Channels() {
 		_ = ch.Stop()
 	}
@@ -317,6 +420,16 @@ func (e *Engine) Close() error {
 		_ = e.agent.Close()
 	}
 	return nil
+}
+
+// IsSuperAgent reports whether Clapbot is running in proactive super-agent mode.
+func (e *Engine) IsSuperAgent() bool {
+	return e.cfg.IsSuperAgent() && e.saEngine != nil
+}
+
+// SuperAgent returns the super-agent domain Engine (or nil if in chat mode).
+func (e *Engine) SuperAgent() *superagent.Engine {
+	return e.saEngine
 }
 
 func (e *Engine) setTurnMeta(sessionID string, req TurnRequest) {
