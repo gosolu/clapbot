@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gosolu/clapbot/internal/channels/feishu"
+	"github.com/gosolu/clapbot/internal/channels/github"
 	"github.com/gosolu/clapbot/internal/channels/telegram"
 	"github.com/gosolu/clapbot/internal/cli"
 	"github.com/gosolu/clapbot/internal/config"
@@ -213,12 +214,15 @@ func runServe(args []string) error {
 	}
 	defer cleanup()
 
-	// Register Telegram and Feishu channels
+	// Register Telegram, Feishu, and GitHub channels
 	if cfg.Channels.Telegram.Enabled {
 		eng.Bus().RegisterChannel(telegram.New(cfg.Channels.Telegram, cfg.UploadsDir(), eng))
 	}
 	if cfg.Channels.Feishu.Enabled {
 		eng.Bus().RegisterChannel(feishu.New(cfg.Channels.Feishu, cfg.UploadsDir(), eng))
+	}
+	if cfg.Channels.GitHub.Enabled {
+		eng.Bus().RegisterChannel(github.New(cfg.Channels.GitHub, eng))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -75,10 +75,26 @@ type LoggingConfig struct {
 	File   string `toml:"file,omitempty" yaml:"file,omitempty"`     // log file path (e.g. ~/.clapbot/logs/clapbot.log)
 }
 
-// ChannelsConfig configures chat app integrations.
+// ChannelsConfig configures chat app and source integrations.
 type ChannelsConfig struct {
 	Telegram TelegramConfig `toml:"telegram" yaml:"telegram"`
 	Feishu   FeishuConfig   `toml:"feishu" yaml:"feishu"`
+	GitHub   GitHubConfig   `toml:"github,omitempty" yaml:"github,omitempty"`
+}
+
+// GitHubConfig configures the GitHub repository watcher channel / event source.
+type GitHubConfig struct {
+	Enabled         bool     `toml:"enabled" yaml:"enabled"`
+	Repository      string   `toml:"repository" yaml:"repository"` // "owner/repo"
+	AgentAccount    string   `toml:"agent_account" yaml:"agent_account"`
+	Token           string   `toml:"token,omitempty" yaml:"token,omitempty"`
+	CLI             string   `toml:"cli,omitempty" yaml:"cli,omitempty"` // "gh" or custom wrapper
+	PollSeconds     int      `toml:"poll_seconds,omitempty" yaml:"poll_seconds,omitempty"` // default: 60
+	ObserveIssues   bool     `toml:"observe_issues,omitempty" yaml:"observe_issues,omitempty"`
+	ObservePulls    bool     `toml:"observe_pulls,omitempty" yaml:"observe_pulls,omitempty"`
+	ObserveComments bool     `toml:"observe_comments,omitempty" yaml:"observe_comments,omitempty"`
+	AllowedUsers    []string `toml:"allowed_users,omitempty" yaml:"allowed_users,omitempty"`
+	Bots            []string `toml:"bots,omitempty" yaml:"bots,omitempty"`
 }
 
 // TelegramConfig configures the Telegram bot channel.
@@ -299,6 +315,9 @@ func Load(homeDir string) (*Config, error) {
 		cfg.SuperAgent.WorkRoot = filepath.Join(homeDir, "work")
 	} else {
 		cfg.SuperAgent.WorkRoot = ExpandPath(cfg.SuperAgent.WorkRoot)
+	}
+	if cfg.Channels.GitHub.PollSeconds <= 0 {
+		cfg.Channels.GitHub.PollSeconds = 60
 	}
 	return cfg, nil
 }
