@@ -62,6 +62,12 @@ func (e *Engine) HandleCommand(ctx context.Context, req TurnRequest) (CommandRes
 - ` + "`/compact`" + ` — Summarize and compact current conversation history
 - ` + "`/schedules`" + ` — List active cron schedules and timers
 - ` + "`/policy`" + ` — Show or update super-agent accept mode and rules
+- ` + "`/tickets [filter]`" + ` — List super-agent tickets (open, ended, person, working, idle)
+- ` + "`/ticket <id|name>`" + ` — View detailed information about a ticket
+- ` + "`/attention`" + ` — Show tickets and evaluations requiring human attention
+- ` + "`/stop <id|name> [reason]`" + ` — Stop work on a ticket and withdraw its mandate
+- ` + "`/retry <id|name>`" + ` — Restart a blocked or failed ticket
+- ` + "`/dismiss <id>`" + ` — Dismiss an unavailable evaluation decision
 - ` + "`/tools`" + ` — List registered agent tools
 - ` + "`/skills`" + ` — List loaded progressive-disclosure skills
 - ` + "`/status`" + ` — Show session, model, workspace, and runtime status
@@ -394,6 +400,252 @@ func (e *Engine) HandleCommand(ctx context.Context, req TurnRequest) (CommandRes
 				Output:  "Unknown /policy subcommand. Use `/policy`, `/policy mode <off|observe|auto>`, or `/policy rule <name> <enable|disable>`.",
 			}, nil
 		}
+
+	case "/tickets":
+		if e.saEngine == nil {
+			return CommandResult{Handled: true, Output: "SuperAgent mode is not active."}, nil
+		}
+		filter := strings.ToLower(strings.TrimSpace(args))
+		var status superagent.TicketStatus
+		switch filter {
+		case "ended":
+			status = superagent.TicketEnded
+		case "all":
+			status = ""
+		default:
+			status = superagent.TicketOpen
+		}
+		tickets, err := e.saEngine.ListTickets(ctx, status)
+		if err != nil {
+			return CommandResult{Handled: true}, err
+		}
+
+		var filtered []*superagent.Ticket
+		for _, t := range tickets {
+			var as *superagent.Assignment
+			if t.AssignmentID != "" {
+				as, _ = e.saEngine.GetAssignment(ctx, t.AssignmentID)
+			}
+			stage := superagent.ComputeStage(t, as)
+			if filter == "person" && !stage.HumanAttention() {
+				continue
+			}
+			if filter == "working" && stage != superagent.StageWorking && stage != superagent.StageWorkingQueued {
+				continue
+			}
+			if filter == "idle" && stage != superagent.StageIdle {
+				continue
+			}
+			filtered = append(filtered, t)
+		}
+
+		if len(filtered) == 0 {
+			msg := "No tickets found."
+			if filter != "" {
+				msg = fmt.Sprintf("No tickets found matching filter `%s`.", filter)
+			}
+			return CommandResult{Handled: true, Output: msg}, nil
+		}
+
+		var b strings.Builder
+		header := "open"
+		if filter != "" {
+			header = filter
+		}
+		fmt.Fprintf(&b, "**Tickets (%s, %d)**\n", header, len(filtered))
+		for _, t := range filtered {
+			var as *superagent.Assignment
+			if t.AssignmentID != "" {
+				as, _ = e.saEngine.GetAssignment(ctx, t.AssignmentID)
+			}
+			stage := superagent.ComputeStage(t, as)
+			warn := ""
+			if stage.HumanAttention() {
+				warn = " ⚠️"
+			}
+			fmt.Fprintf(&b, "- `%s` [%s%s]: %s (ID: `%s`)\n", t.Name, stage, warn, t.Title, t.ID)
+			if t.Attention != "" {
+				fmt.Fprintf(&b, "  *Attention*: %s\n", t.Attention)
+			} else if t.LastReport != nil && t.LastReport.State != superagent.ReportProgress {
+				fmt.Fprintf(&b, "  *Report*: [%s] %s\n", t.LastReport.State, t.LastReport.Summary)
+			}
+		}
+		return CommandResult{Handled: true, Output: strings.TrimSpace(b.String())}, nil
+
+	case "/ticket":
+		if e.saEngine == nil {
+			return CommandResult{Handled: true, Output: "SuperAgent mode is not active."}, nil
+		}
+		query := strings.TrimSpace(args)
+		if query == "" {
+			return CommandResult{Handled: true, Output: "Usage: `/ticket <id|name>`"}, nil
+		}
+		t, err := e.saEngine.FindTicketByIDOrName(ctx, query)
+		if err != nil {
+			return CommandResult{Handled: true}, err
+		}
+		if t == nil {
+			return CommandResult{Handled: true, Output: fmt.Sprintf("Ticket `%s` not found.", query)}, nil
+		}
+		detail, err := e.saEngine.GetTicketDetail(ctx, t.ID)
+		if err != nil {
+			return CommandResult{Handled: true}, err
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "**Ticket `%s`** (%s)\n", detail.Ticket.Name, detail.Ticket.ID)
+		fmt.Fprintf(&b, "- **Title**: %s\n", detail.Ticket.Title)
+		fmt.Fprintf(&b, "- **Status**: `%s`\n", detail.Ticket.Status)
+		fmt.Fprintf(&b, "- **Stage**: `%s`", detail.Stage)
+		if detail.HumanAttention {
+			b.WriteString(" ⚠️ *(requires human attention)*")
+		}
+		b.WriteString("\n")
+		if detail.Ticket.Attention != "" {
+			fmt.Fprintf(&b, "- **Attention Question**: %s\n", detail.Ticket.Attention)
+		}
+		if detail.Ticket.DeliveryError != "" {
+			fmt.Fprintf(&b, "- **Delivery Error**: %s\n", detail.Ticket.DeliveryError)
+		}
+		if detail.Ticket.Note != "" {
+			fmt.Fprintf(&b, "- **Routing Note**: %s\n", detail.Ticket.Note)
+		}
+		fmt.Fprintf(&b, "- **Requester**: %s (source: `%s`)\n", detail.Ticket.Mandate.Requester.Label(), detail.Ticket.Mandate.Source)
+		if len(detail.Ticket.Mandate.MatchedRules) > 0 {
+			fmt.Fprintf(&b, "- **Matched Rules**: %s\n", strings.Join(detail.Ticket.Mandate.MatchedRules, ", "))
+		}
+		fmt.Fprintf(&b, "- **Mandate**: strength=`%s`, basis=`%s`, policy_version=`%s`\n", detail.Ticket.Mandate.Strength, detail.Ticket.Mandate.Basis, detail.Ticket.Mandate.PolicyVersion)
+		if detail.ActiveAssignment != nil {
+			fmt.Fprintf(&b, "- **Active Assignment**: `%s` (status: `%s`)\n", detail.ActiveAssignment.ID, detail.ActiveAssignment.Status)
+		}
+		if detail.Ticket.LastReport != nil {
+			fmt.Fprintf(&b, "- **Latest Report** [%s]: %s\n", detail.Ticket.LastReport.State, detail.Ticket.LastReport.Summary)
+			if detail.Ticket.LastReport.Question != "" {
+				fmt.Fprintf(&b, "  *Report Question*: %s\n", detail.Ticket.LastReport.Question)
+			}
+		}
+		if len(detail.Inputs) > 0 {
+			fmt.Fprintf(&b, "- **Inputs** (%d):\n", len(detail.Inputs))
+			for _, in := range detail.Inputs {
+				kindStr := string(in.Kind)
+				if in.Owned {
+					kindStr += " (owned)"
+				}
+				preview := in.Text
+				if len([]rune(preview)) > 60 {
+					preview = string([]rune(preview)[:60]) + "..."
+				}
+				fmt.Fprintf(&b, "  - [%s, %s] %s\n", kindStr, in.Status, preview)
+			}
+		}
+		return CommandResult{Handled: true, Output: strings.TrimSpace(b.String())}, nil
+
+	case "/stop":
+		if e.saEngine == nil {
+			return CommandResult{Handled: true, Output: "SuperAgent mode is not active."}, nil
+		}
+		fields := strings.Fields(args)
+		if len(fields) == 0 {
+			return CommandResult{Handled: true, Output: "Usage: `/stop <id|name> [reason]`"}, nil
+		}
+		query := fields[0]
+		reason := "stopped by user via command"
+		if len(fields) > 1 {
+			reason = strings.Join(fields[1:], " ")
+		}
+		t, err := e.saEngine.FindTicketByIDOrName(ctx, query)
+		if err != nil {
+			return CommandResult{Handled: true}, err
+		}
+		if t == nil {
+			return CommandResult{Handled: true, Output: fmt.Sprintf("Ticket `%s` not found.", query)}, nil
+		}
+		if err := e.saEngine.StopTicket(ctx, t.ID, reason); err != nil {
+			return CommandResult{Handled: true}, err
+		}
+		return CommandResult{
+			Handled: true,
+			Output:  fmt.Sprintf("Ticket `%s` (`%s`) stopped. Mandate withdrawn.", t.Name, t.ID),
+		}, nil
+
+	case "/retry":
+		if e.saEngine == nil {
+			return CommandResult{Handled: true, Output: "SuperAgent mode is not active."}, nil
+		}
+		query := strings.TrimSpace(args)
+		if query == "" {
+			return CommandResult{Handled: true, Output: "Usage: `/retry <id|name>`"}, nil
+		}
+		t, err := e.saEngine.FindTicketByIDOrName(ctx, query)
+		if err != nil {
+			return CommandResult{Handled: true}, err
+		}
+		if t == nil {
+			return CommandResult{Handled: true, Output: fmt.Sprintf("Ticket `%s` not found.", query)}, nil
+		}
+		if err := e.saEngine.RetryTicket(ctx, t.ID); err != nil {
+			return CommandResult{Handled: true}, err
+		}
+		return CommandResult{
+			Handled: true,
+			Output:  fmt.Sprintf("Ticket `%s` (`%s`) restarted for retry.", t.Name, t.ID),
+		}, nil
+
+	case "/attention":
+		if e.saEngine == nil {
+			return CommandResult{Handled: true, Output: "SuperAgent mode is not active."}, nil
+		}
+		att, err := e.saEngine.GetAttention(ctx)
+		if err != nil {
+			return CommandResult{Handled: true}, err
+		}
+		if len(att.Tickets) == 0 && len(att.UnavailableEvals) == 0 {
+			return CommandResult{
+				Handled: true,
+				Output:  "No tickets or evaluations currently require human attention.",
+			}, nil
+		}
+		var b strings.Builder
+		total := len(att.Tickets) + len(att.UnavailableEvals)
+		fmt.Fprintf(&b, "**Attention Needed (%d item(s))**\n", total)
+		if len(att.Tickets) > 0 {
+			b.WriteString("\n**Tickets Awaiting Human Action**:\n")
+			for _, t := range att.Tickets {
+				fmt.Fprintf(&b, "- `%s` [%s]: %s (ID: `%s`)\n", t.Name, t.Stage, t.Title, t.TicketID)
+				if t.Attention != "" {
+					fmt.Fprintf(&b, "  *Question*: %s\n", t.Attention)
+				}
+				if t.DeliveryError != "" {
+					fmt.Fprintf(&b, "  *Delivery Error*: %s\n", t.DeliveryError)
+				}
+				if t.LastReport != nil && t.LastReport.Summary != "" {
+					fmt.Fprintf(&b, "  *Report*: %s\n", t.LastReport.Summary)
+				}
+			}
+		}
+		if len(att.UnavailableEvals) > 0 {
+			b.WriteString("\n**Unavailable Evaluations** (use `/dismiss <id>` to dismiss):\n")
+			for _, d := range att.UnavailableEvals {
+				fmt.Fprintf(&b, "- Decision `%s` (thread `%s`): %s\n", d.ID, d.Thread, d.Reason)
+			}
+		}
+		return CommandResult{Handled: true, Output: strings.TrimSpace(b.String())}, nil
+
+	case "/dismiss":
+		if e.saEngine == nil {
+			return CommandResult{Handled: true, Output: "SuperAgent mode is not active."}, nil
+		}
+		id := strings.TrimSpace(args)
+		if id == "" {
+			return CommandResult{Handled: true, Output: "Usage: `/dismiss <decision_id>`"}, nil
+		}
+		if err := e.saEngine.Dismiss(ctx, id); err != nil {
+			return CommandResult{Handled: true}, err
+		}
+		return CommandResult{
+			Handled: true,
+			Output:  fmt.Sprintf("Decision `%s` dismissed.", id),
+		}, nil
 
 	default:
 		return CommandResult{}, nil

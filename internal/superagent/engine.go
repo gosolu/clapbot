@@ -3,6 +3,7 @@ package superagent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -404,4 +405,203 @@ func (e *Engine) UpdatePolicy(ctx context.Context, newPolicy Policy) error {
 		effects := ComputePolicyEffects(openTickets, oldPolicy, newPolicy)
 		return e.policyChangedTx(tx, fromVer, toVer, effects)
 	})
+}
+
+// GetTicket retrieves a single Ticket by ID.
+func (e *Engine) GetTicket(ctx context.Context, id string) (*Ticket, error) {
+	var t *Ticket
+	err := e.repos.Transact(ctx, func(tx Tx) error {
+		var err error
+		t, err = tx.GetTicket(id)
+		return err
+	})
+	return t, err
+}
+
+// GetAssignment retrieves a single Assignment by ID.
+func (e *Engine) GetAssignment(ctx context.Context, id string) (*Assignment, error) {
+	var a *Assignment
+	err := e.repos.Transact(ctx, func(tx Tx) error {
+		var err error
+		a, err = tx.GetAssignment(id)
+		return err
+	})
+	return a, err
+}
+
+// FindTicketByIDOrName looks up a Ticket matching either its ID or its short Name (e.g. "task-xyz").
+func (e *Engine) FindTicketByIDOrName(ctx context.Context, query string) (*Ticket, error) {
+	var found *Ticket
+	err := e.repos.Transact(ctx, func(tx Tx) error {
+		t, err := tx.GetTicket(query)
+		if err == nil && t != nil {
+			found = t
+			return nil
+		}
+		all, err := tx.ListTickets("")
+		if err != nil {
+			return err
+		}
+		for _, item := range all {
+			if strings.EqualFold(item.Name, query) || strings.EqualFold(item.ID, query) {
+				found = item
+				return nil
+			}
+		}
+		return nil
+	})
+	return found, err
+}
+
+// ListTickets returns tickets filtered by status ("open", "ended", or "" for all).
+func (e *Engine) ListTickets(ctx context.Context, status TicketStatus) ([]*Ticket, error) {
+	var list []*Ticket
+	err := e.repos.Transact(ctx, func(tx Tx) error {
+		var err error
+		list, err = tx.ListTickets(status)
+		return err
+	})
+	return list, err
+}
+
+// GetTicketDetail returns the complete TicketDetailView including stage, assignment, inputs, and subscriptions.
+func (e *Engine) GetTicketDetail(ctx context.Context, ticketID string) (*TicketDetailView, error) {
+	var detail *TicketDetailView
+	err := e.repos.Transact(ctx, func(tx Tx) error {
+		t, err := tx.GetTicket(ticketID)
+		if err != nil || t == nil {
+			return fmt.Errorf("ticket %s not found", ticketID)
+		}
+		var as *Assignment
+		if t.AssignmentID != "" {
+			as, _ = tx.GetAssignment(t.AssignmentID)
+		}
+		stage := ComputeStage(t, as)
+		inputs, _ := tx.GetInputsForTicket(t.ID)
+		subs, _ := tx.GetSubscriptionsForTicket(t.ID)
+
+		detail = &TicketDetailView{
+			Ticket:           t,
+			Stage:            stage,
+			HumanAttention:   stage.HumanAttention(),
+			ActiveAssignment: as,
+			Inputs:           inputs,
+			Subscriptions:    subs,
+		}
+		return nil
+	})
+	return detail, err
+}
+
+// ListDecisions returns recorded decisions.
+func (e *Engine) ListDecisions(ctx context.Context, outcome Outcome, limit int) ([]*Decision, error) {
+	var list []*Decision
+	err := e.repos.Transact(ctx, func(tx Tx) error {
+		var err error
+		list, err = tx.ListDecisions(outcome, limit)
+		return err
+	})
+	return list, err
+}
+
+// GetAttention returns all tickets and undismissed unavailable evals that require human attention.
+func (e *Engine) GetAttention(ctx context.Context) (*AttentionItem, error) {
+	att := &AttentionItem{}
+	err := e.repos.Transact(ctx, func(tx Tx) error {
+		openTickets, err := tx.ListOpenTickets()
+		if err != nil {
+			return err
+		}
+		for _, t := range openTickets {
+			var as *Assignment
+			if t.AssignmentID != "" {
+				as, _ = tx.GetAssignment(t.AssignmentID)
+			}
+			stage := ComputeStage(t, as)
+			if stage.HumanAttention() {
+				att.Tickets = append(att.Tickets, AttentionTicket{
+					TicketID:      t.ID,
+					Name:          t.Name,
+					Title:         t.Title,
+					Stage:         stage,
+					Attention:     t.Attention,
+					DeliveryError: t.DeliveryError,
+					LastReport:    t.LastReport,
+					Channels:      t.Channels,
+					CreatedAt:     t.CreatedAt,
+					UpdatedAt:     t.UpdatedAt,
+				})
+			}
+		}
+
+		// Unavailable decisions that have not been dismissed
+		decisions, err := tx.ListDecisions(OutcomeUnavailable, 100)
+		if err == nil {
+			for _, d := range decisions {
+				if !strings.Contains(d.Reason, "dismissed by user") {
+					att.UnavailableEvals = append(att.UnavailableEvals, d)
+				}
+			}
+		}
+		return nil
+	})
+	return att, err
+}
+
+// GetOverview constructs the operator overview view.
+func (e *Engine) GetOverview(ctx context.Context) (*OverviewView, error) {
+	att, err := e.GetAttention(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		totalCount int
+		openCount  int
+		endedCount int
+		load       ExecutorLoad
+	)
+
+	err = e.repos.Transact(ctx, func(tx Tx) error {
+		all, err := tx.ListTickets("")
+		if err != nil {
+			return err
+		}
+		totalCount = len(all)
+		for _, t := range all {
+			if t.Live() {
+				openCount++
+				var as *Assignment
+				if t.AssignmentID != "" {
+					as, _ = tx.GetAssignment(t.AssignmentID)
+				}
+				stage := ComputeStage(t, as)
+				switch stage {
+				case StageWorking:
+					load.Running++
+				case StageWorkingQueued:
+					load.Queued++
+				case StageIdle:
+					load.Idle++
+				}
+			} else {
+				endedCount++
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	pol := e.Policy()
+	return &OverviewView{
+		PolicyVersion: pol.Version(),
+		AcceptMode:    pol.Mode(),
+		Attention:     *att,
+		ExecutorLoad:  load,
+		TotalTickets:  totalCount,
+		OpenTickets:   openCount,
+		EndedTickets:  endedCount,
+	}, nil
 }

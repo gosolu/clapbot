@@ -135,6 +135,20 @@ func (m *MemStore) SaveDecision(d *Decision) error {
 	return nil
 }
 
+func (m *MemStore) ListDecisions(outcome Outcome, limit int) ([]*Decision, error) {
+	var out []*Decision
+	for _, d := range m.decisions {
+		if outcome == "" || d.Outcome == outcome {
+			cp := *d
+			out = append(out, &cp)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 func (m *MemStore) GetLatestDecisionForThread(threadKey string) (*Decision, error) {
 	var latest *Decision
 	for _, d := range m.decisions {
@@ -163,15 +177,19 @@ func (m *MemStore) SaveTicket(t *Ticket) error {
 	return nil
 }
 
-func (m *MemStore) ListOpenTickets() ([]*Ticket, error) {
+func (m *MemStore) ListTickets(status TicketStatus) ([]*Ticket, error) {
 	var out []*Ticket
 	for _, t := range m.tickets {
-		if t.Live() {
+		if status == "" || status == "all" || t.Status == status {
 			cp := *t
 			out = append(out, &cp)
 		}
 	}
 	return out, nil
+}
+
+func (m *MemStore) ListOpenTickets() ([]*Ticket, error) {
+	return m.ListTickets(TicketOpen)
 }
 
 func (m *MemStore) FindTicketsForThread(threadKey string) ([]*Ticket, error) {

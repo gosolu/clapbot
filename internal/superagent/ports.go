@@ -26,11 +26,13 @@ type Tx interface {
 	GetDecision(id string) (*Decision, error)
 	SaveDecision(d *Decision) error
 	GetLatestDecisionForThread(threadKey string) (*Decision, error)
+	ListDecisions(outcome Outcome, limit int) ([]*Decision, error)
 
 	// Tickets
 	GetTicket(id string) (*Ticket, error)
 	SaveTicket(t *Ticket) error
 	ListOpenTickets() ([]*Ticket, error)
+	ListTickets(status TicketStatus) ([]*Ticket, error)
 	FindTicketsForThread(threadKey string) ([]*Ticket, error)
 
 	// Assignments

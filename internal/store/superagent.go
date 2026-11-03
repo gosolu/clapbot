@@ -283,6 +283,41 @@ func (s *superagentTx) GetDecision(id string) (*superagent.Decision, error) {
 	return &d, nil
 }
 
+func (s *superagentTx) ListDecisions(outcome superagent.Outcome, limit int) ([]*superagent.Decision, error) {
+	query := `SELECT id, eval_id, thread, trigger_id, outcome, reason, ticket_id, would_accept, matched_rules_json, policy_version, at FROM sa_decisions`
+	var args []any
+	if outcome != "" {
+		query += ` WHERE outcome = ?`
+		args = append(args, string(outcome))
+	}
+	query += ` ORDER BY at DESC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.tx.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*superagent.Decision
+	for rows.Next() {
+		var (
+			d        superagent.Decision
+			rulesRaw string
+		)
+		if err := rows.Scan(
+			&d.ID, &d.EvalID, &d.Thread, &d.TriggerID, &d.Outcome, &d.Reason, &d.TicketID, &d.WouldAccept, &rulesRaw, &d.PolicyVersion, &d.At,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(rulesRaw), &d.MatchedRules)
+		out = append(out, &d)
+	}
+	return out, rows.Err()
+}
+
 func (s *superagentTx) SaveDecision(d *superagent.Decision) error {
 	rulesRaw, _ := json.Marshal(d.MatchedRules)
 	_, err := s.tx.Exec(`
@@ -408,8 +443,15 @@ func (s *superagentTx) SaveTicket(t *superagent.Ticket) error {
 	return err
 }
 
-func (s *superagentTx) ListOpenTickets() ([]*superagent.Ticket, error) {
-	rows, err := s.tx.Query(`SELECT id FROM sa_tickets WHERE status = 'open'`)
+func (s *superagentTx) ListTickets(status superagent.TicketStatus) ([]*superagent.Ticket, error) {
+	query := `SELECT id FROM sa_tickets`
+	var args []any
+	if status != "" && status != "all" {
+		query += ` WHERE status = ?`
+		args = append(args, string(status))
+	}
+	query += ` ORDER BY created_at DESC`
+	rows, err := s.tx.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -429,6 +471,10 @@ func (s *superagentTx) ListOpenTickets() ([]*superagent.Ticket, error) {
 		}
 	}
 	return out, nil
+}
+
+func (s *superagentTx) ListOpenTickets() ([]*superagent.Ticket, error) {
+	return s.ListTickets(superagent.TicketOpen)
 }
 
 func (s *superagentTx) FindTicketsForThread(threadKey string) ([]*superagent.Ticket, error) {

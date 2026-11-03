@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/gosolu/clapbot/internal/runtime"
+	"github.com/gosolu/clapbot/internal/superagent"
 	"github.com/gosolu/react"
 )
 
@@ -55,6 +57,14 @@ func NewServer(addr string, eng *runtime.Engine) *Server {
 	mux.HandleFunc("GET /api/profiles", s.auth(s.handleListProfiles))
 	mux.HandleFunc("POST /api/command", s.auth(s.handleCommand))
 	mux.HandleFunc("POST /api/turn", s.auth(s.handleTurn))
+	mux.HandleFunc("GET /api/tickets", s.auth(s.handleListTickets))
+	mux.HandleFunc("GET /api/tickets/{id}", s.auth(s.handleGetTicket))
+	mux.HandleFunc("POST /api/tickets/{id}/stop", s.auth(s.handleStopTicket))
+	mux.HandleFunc("POST /api/tickets/{id}/retry", s.auth(s.handleRetryTicket))
+	mux.HandleFunc("GET /api/attention", s.auth(s.handleAttention))
+	mux.HandleFunc("GET /api/decisions", s.auth(s.handleListDecisions))
+	mux.HandleFunc("POST /api/decisions/{id}/dismiss", s.auth(s.handleDismissDecision))
+	mux.HandleFunc("GET /api/overview", s.auth(s.handleOverview))
 	mux.HandleFunc("/ws", s.auth(s.handleWS))
 
 	s.httpSv = &http.Server{
@@ -257,4 +267,190 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (s *Server) requireSuperAgent(w http.ResponseWriter) *superagent.Engine {
+	if s.engine == nil || !s.engine.IsSuperAgent() || s.engine.SuperAgent() == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "superagent mode is not active"})
+		return nil
+	}
+	return s.engine.SuperAgent()
+}
+
+func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
+	sa := s.requireSuperAgent(w)
+	if sa == nil {
+		return
+	}
+	state := r.URL.Query().Get("state") // "open" (default), "ended", "all"
+	stageFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("stage")))
+
+	var status superagent.TicketStatus
+	switch strings.ToLower(state) {
+	case "ended":
+		status = superagent.TicketEnded
+	case "all":
+		status = ""
+	default:
+		status = superagent.TicketOpen
+	}
+
+	tickets, err := sa.ListTickets(r.Context(), status)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	var out []superagent.TicketSummaryView
+	for _, t := range tickets {
+		var as *superagent.Assignment
+		if t.AssignmentID != "" {
+			as, _ = sa.GetAssignment(r.Context(), t.AssignmentID)
+		}
+		stage := superagent.ComputeStage(t, as)
+
+		// Filter by stage if requested
+		if stageFilter != "" && stageFilter != "all" {
+			if stageFilter == "person" && !stage.HumanAttention() {
+				continue
+			}
+			if stageFilter == "working" && stage != superagent.StageWorking && stage != superagent.StageWorkingQueued {
+				continue
+			}
+			if stageFilter == "idle" && stage != superagent.StageIdle {
+				continue
+			}
+		}
+
+		out = append(out, superagent.TicketSummaryView{
+			ID:             t.ID,
+			Name:           t.Name,
+			Title:          t.Title,
+			Status:         t.Status,
+			Stage:          stage,
+			HumanAttention: stage.HumanAttention(),
+			Attention:      t.Attention,
+			AssignmentID:   t.AssignmentID,
+			Requester:      t.Mandate.Requester.Label(),
+			Channels:       t.Channels,
+			CreatedAt:      t.CreatedAt,
+			UpdatedAt:      t.UpdatedAt,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tickets": out,
+		"total":   len(out),
+	})
+}
+
+func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) {
+	sa := s.requireSuperAgent(w)
+	if sa == nil {
+		return
+	}
+	id := r.PathValue("id")
+	detail, err := sa.GetTicketDetail(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleStopTicket(w http.ResponseWriter, r *http.Request) {
+	sa := s.requireSuperAgent(w)
+	if sa == nil {
+		return
+	}
+	id := r.PathValue("id")
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	reason := req.Reason
+	if reason == "" {
+		reason = "stopped via Gateway API"
+	}
+
+	if err := sa.StopTicket(r.Context(), id, reason); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"stopped": true, "ticket_id": id})
+}
+
+func (s *Server) handleRetryTicket(w http.ResponseWriter, r *http.Request) {
+	sa := s.requireSuperAgent(w)
+	if sa == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if err := sa.RetryTicket(r.Context(), id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"retried": true, "ticket_id": id})
+}
+
+func (s *Server) handleAttention(w http.ResponseWriter, r *http.Request) {
+	sa := s.requireSuperAgent(w)
+	if sa == nil {
+		return
+	}
+	att, err := sa.GetAttention(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, att)
+}
+
+func (s *Server) handleListDecisions(w http.ResponseWriter, r *http.Request) {
+	sa := s.requireSuperAgent(w)
+	if sa == nil {
+		return
+	}
+	outcome := superagent.Outcome(r.URL.Query().Get("outcome"))
+	limit := 50
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	list, err := sa.ListDecisions(r.Context(), outcome, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"decisions": list,
+		"total":     len(list),
+	})
+}
+
+func (s *Server) handleDismissDecision(w http.ResponseWriter, r *http.Request) {
+	sa := s.requireSuperAgent(w)
+	if sa == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if err := sa.Dismiss(r.Context(), id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"dismissed": true, "decision_id": id})
+}
+
+func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
+	sa := s.requireSuperAgent(w)
+	if sa == nil {
+		return
+	}
+	ov, err := sa.GetOverview(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, ov)
 }
