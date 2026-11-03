@@ -295,6 +295,15 @@ func NewEngine(cfg *config.Config, st *store.SQLiteStore, router *provider.Route
 					UnlistedUnaddressed: superagent.CellIgnore,
 				},
 			},
+			"github": {
+				Allowed: cfg.Channels.GitHub.AllowedUsers,
+				Bots:    cfg.Channels.GitHub.Bots,
+				Default: superagent.Admission{
+					ListedUnaddressed:   superagent.CellInferred,
+					UnlistedAddressed:   superagent.CellIgnore,
+					UnlistedUnaddressed: superagent.CellIgnore,
+				},
+			},
 		}
 
 		var rules []superagent.Rule

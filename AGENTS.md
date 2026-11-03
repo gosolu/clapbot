@@ -55,6 +55,9 @@ make verify         # Run fmt-check, vet, and tests
      - `cron.ContextKeyWorkspace` (`"clapbot.workspace"`)
      - `cron.ContextKeyChannel` (`"clapbot.channel"`)
      - `cron.ContextKeyChatID` (`"clapbot.chat_id"`)
+   - Worker tools in super-agent mode (`worker_report`, `worker_reply`, `worker_handback`, `worker_subscribe_context`) read ticket context securely from `react.RunContextFrom(ctx)` using:
+     - `executor.ContextKeyTicketID` (`"superagent.ticket_id"`)
+     - `executor.ContextKeyAssignmentID` (`"superagent.assignment_id"`)
 
 ---
 
@@ -77,8 +80,23 @@ clapbot/
 │   │   └── tools.go                  # react.Tool: memory_read, memory_save, memory_search
 │   ├── runtime/
 │   │   ├── engine.go                 # Central Engine wrapping react.Agent, sub-agents, hooks & compaction
-│   │   ├── commands.go               # Unified slash commands (/new, /reset, /sessions, /workspace, /model, /compact, etc.)
+│   │   ├── commands.go               # Unified slash commands (/new, /reset, /sessions, /policy, /tickets, /attention, etc.)
 │   │   └── bus.go                    # Channel registry, proactive message/file sender, and live TurnEvent pub/sub
+│   ├── superagent/                   # Pure-domain proactive super-agent core (dsh-superagent-prototype)
+│   │   ├── model.go                  # Trigger, Thread, Eval, Decision, Mandate, Ticket, Assignment, Report, Effect
+│   │   ├── policy.go                 # Admission gating matrix, bots, rules, version hash, accept mode (off|observe|auto)
+│   │   ├── ports.go                  # Repositories, Tx, SourceScope, Assessor, Executor, Outbox interfaces
+│   │   ├── engine.go                 # Role interfaces (EngineForSources, ForMainSession, ForExecutor, ForPeople)
+│   │   ├── intake.go                 # Trigger ingestion, deduplication, subscription fan-out, eval queueing
+│   │   ├── evals.go                  # Candidate assessment, deadlines, timeouts, policy invalidation
+│   │   ├── tickets.go                # Ticket creation, stopping, revalidation, mandate checks, resume
+│   │   ├── assignments.go            # Worker session binding, input delivery, turn tracking, structured reports
+│   │   ├── stage.go                  # Precedence stage computation (person/*, working/*, idle) & attention views
+│   │   ├── outbox.go                 # Transactional Outbox with lane-ordered delivery
+│   │   ├── effects.go                # Stored-effect runner with exponential backoff & retry
+│   │   ├── passes.go                 # 2s background tick loop for due effects and eval timeouts
+│   │   ├── executor/                 # Worker session runner, concurrency slots (+1 priority), worker tools
+│   │   └── orchestrator/             # Main routing session (Assessor), candidate cards, routing tools
 │   ├── tools/
 │   │   ├── builtin/builtin.go        # Filesystem (read_file, write_file, edit_file, list_dir) & shell tools
 │   │   ├── web/web.go                # web_fetch (HTML-to-Markdown, DeepSeek) & web_search (DuckDuckGo, Brave, Tavily, DeepSeek)
@@ -89,8 +107,9 @@ clapbot/
 │   │   └── plugin.go                 # Bridges MCP servers into react.Agent as a react.Plugin
 │   ├── channels/
 │   │   ├── channel.go                # Shared channel turn executor, 1.1s rate-limited live message editor, text chunker
-│   │   ├── telegram/telegram.go      # Telegram Bot adapter (HTTP long-polling, allowlist, media download/upload)
-│   │   └── feishu/feishu.go          # Feishu/Lark adapter (WebSocket long-connection, pure-Go pbbp2 protobuf codec)
+│   │   ├── telegram/telegram.go      # Telegram Bot adapter (HTTP long-polling, allowlist, superagent triggers)
+│   │   ├── feishu/feishu.go          # Feishu/Lark adapter (WebSocket long-connection, pure-Go pbbp2 protobuf codec)
+│   │   └── github/github.go          # GitHub watcher adapter (pure-Go REST/httpr polling, issue/PR comment & close events)
 │   ├── gateway/
 │   │   ├── server.go                 # Local HTTP + WebSocket server (/health, /api/sessions, /api/profiles, /ws)
 │   │   └── client.go                 # Gateway client used by `clapbot chat` to attach to a running daemon

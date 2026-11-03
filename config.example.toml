@@ -122,6 +122,37 @@ domain = "https://open.feishu.cn"
 allowed_users = []
 stream_mode = "edit"
 
+[channels.github]
+# Enable GitHub event source / watcher (polls notifications, issues, comments, PR closures)
+enabled = false
+repository = "owner/repo"
+agent_account = "mybot"
+token = "${GITHUB_TOKEN}"
+poll_seconds = 60
+observe_issues = false
+observe_pulls = false
+observe_comments = true
+allowed_users = [] # GitHub logins permitted to originate work
+bots = []          # Bot accounts permitted for proactive observation
+
+# ------------------------------------------------------------------------------
+# SuperAgent Mode Configuration (Proactive Event & Ticket Architecture)
+#
+# mode: "chat" (default reactive REPL / channel turns) | "superagent"
+# ------------------------------------------------------------------------------
+# mode = "superagent"
+
+[superagent]
+accept_mode = "observe" # "off" | "observe" (default) | "auto"
+max_slots = 3           # Concurrent worker session limit (+1 reserved for human wakes)
+# work_root = "~/.clapbot/work"
+# prepare_command = "git worktree add -B ${CLAPBOT_NAME} ${CLAPBOT_DIR} main"
+
+# [[superagent.rules]]
+# name = "triage-bug"
+# instructions = "Assess whether the issue describes a reproducible bug with steps and logs, and prepare a fix."
+# enabled = true
+
 # ------------------------------------------------------------------------------
 # Web Search & Web Fetch Configuration
 #
