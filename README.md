@@ -70,3 +70,10 @@ CGO_ENABLED=0 go build -o clapbot ./cmd/clapbot
 | `/status` | Show session, model, workspace, and runtime status |
 | `/detach` | Detach CLI from the background Gateway daemon |
 | `/exit` | Exit the CLI REPL |
+
+---
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
+
