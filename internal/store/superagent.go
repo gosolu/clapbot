@@ -365,11 +365,11 @@ func (s *superagentTx) GetTicket(id string) (*superagent.Ticket, error) {
 		FROM sa_tickets WHERE id = ?`, id)
 
 	var (
-		t            superagent.Ticket
-		mandateRaw   string
-		channelsRaw  string
-		answerRaw    sql.NullString
-		reportRaw    sql.NullString
+		t           superagent.Ticket
+		mandateRaw  string
+		channelsRaw string
+		answerRaw   sql.NullString
+		reportRaw   sql.NullString
 	)
 
 	err := row.Scan(

@@ -290,10 +290,10 @@ func (b *Bot) handleInboundSuperAgent(ctx context.Context, msg *tgMessage, text 
 
 	threadKey := fmt.Sprintf("tg:%d", msg.Chat.ID)
 	tr := superagent.Trigger{
-		ID:        fmt.Sprintf("telegram:%d:%d", msg.Chat.ID, msg.MessageID),
-		Source:    "telegram",
-		Thread:    threadKey,
-		Scope:     chatID,
+		ID:     fmt.Sprintf("telegram:%d:%d", msg.Chat.ID, msg.MessageID),
+		Source: "telegram",
+		Thread: threadKey,
+		Scope:  chatID,
 		Actor: superagent.Actor{
 			ID:      uidStr,
 			Name:    uname,

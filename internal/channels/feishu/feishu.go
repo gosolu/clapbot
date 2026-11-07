@@ -75,7 +75,7 @@ func (b *Bot) Start(ctx context.Context) error {
 	if !b.cfg.Enabled || strings.TrimSpace(b.cfg.AppID) == "" || strings.TrimSpace(b.cfg.AppSecret) == "" {
 		return nil
 	}
-	_ = os.MkdirAll(b.uploadsDir, 0755)
+	_ = os.MkdirAll(b.uploadsDir, 0o755)
 	cctx, cancel := context.WithCancel(ctx)
 	b.mu.Lock()
 	b.cancel = cancel
@@ -281,7 +281,8 @@ func (b *Bot) handleEventJSON(ctx context.Context, raw []byte) {
 	userID := env.Event.Sender.SenderID.UserID
 	chatID := env.Event.Message.ChatID
 
-	ctx = xslog.ContextAppendAttrs(ctx,
+	ctx = xslog.ContextAppendAttrs(
+		ctx,
 		slog.String("channel", "feishu"),
 		slog.String("chat_id", chatID),
 		slog.String("message_id", msgID),
@@ -342,10 +343,10 @@ func (b *Bot) handleEventSuperAgent(ctx context.Context, env feishuEventEnvelope
 	}
 
 	tr := superagent.Trigger{
-		ID:        fmt.Sprintf("feishu:%s", msgID),
-		Source:    "feishu",
-		Thread:    threadKey,
-		Scope:     chatID,
+		ID:     fmt.Sprintf("feishu:%s", msgID),
+		Source: "feishu",
+		Thread: threadKey,
+		Scope:  chatID,
 		Actor: superagent.Actor{
 			ID:      openID,
 			Aliases: []string{userID},

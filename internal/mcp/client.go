@@ -51,10 +51,12 @@ type Client struct {
 	nextID atomic.Int64
 
 	// stdio transport fields
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	writeMu sync.Mutex
-	pending sync.Map // map[int64]chan rpcResponse
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	cancel   context.CancelFunc
+	waitOnce sync.Once
+	writeMu  sync.Mutex
+	pending  sync.Map // map[int64]chan rpcResponse
 
 	// HTTP transport fields
 	sessionID string
@@ -75,7 +77,7 @@ func Connect(ctx context.Context, name string, cfg config.MCPServerConfig) (*Cli
 	if strings.TrimSpace(cfg.Command) == "" {
 		return nil, fmt.Errorf("mcp server %q requires either command or url", name)
 	}
-	if err := c.startStdio(ctx); err != nil {
+	if err := c.startStdio(); err != nil {
 		return nil, err
 	}
 	if err := c.initHandshake(ctx); err != nil {
@@ -85,25 +87,30 @@ func Connect(ctx context.Context, name string, cfg config.MCPServerConfig) (*Cli
 	return c, nil
 }
 
-func (c *Client) startStdio(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, c.cfg.Command, c.cfg.Args...)
+func (c *Client) startStdio() error {
+	procCtx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(procCtx, c.cfg.Command, c.cfg.Args...)
 	cmd.Env = os.Environ()
 	for k, v := range c.cfg.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		cancel()
 		return err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		cancel()
 		return err
 	}
 	if err := cmd.Start(); err != nil {
+		cancel()
 		return fmt.Errorf("mcp %s start %q: %w", c.name, c.cfg.Command, err)
 	}
 	c.cmd = cmd
 	c.stdin = stdin
+	c.cancel = cancel
 
 	go c.readLoop(stdout)
 	return nil
@@ -136,6 +143,7 @@ func (c *Client) readLoop(r io.Reader) {
 		close(ch)
 		return true
 	})
+	c.wait()
 }
 
 func (c *Client) initHandshake(ctx context.Context) error {
@@ -309,14 +317,26 @@ func (c *Client) callHTTP(ctx context.Context, rpcReq rpcRequest) (json.RawMessa
 	return rpcResp.Result, nil
 }
 
+func (c *Client) wait() {
+	c.waitOnce.Do(func() {
+		if c.cmd != nil && c.cmd.Process != nil {
+			_ = c.cmd.Wait()
+		}
+	})
+}
+
 // Close terminates the MCP connection or subprocess.
 func (c *Client) Close() error {
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
+	}
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}
 	if c.cmd != nil && c.cmd.Process != nil {
 		_ = c.cmd.Process.Kill()
-		_ = c.cmd.Wait()
 	}
+	c.wait()
 	return nil
 }

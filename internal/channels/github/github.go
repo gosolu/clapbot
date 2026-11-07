@@ -175,15 +175,15 @@ type ghUser struct {
 }
 
 type ghIssue struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	Body      string    `json:"body"`
-	User      ghUser    `json:"user"`
-	State     string    `json:"state"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Number    int        `json:"number"`
+	Title     string     `json:"title"`
+	Body      string     `json:"body"`
+	User      ghUser     `json:"user"`
+	State     string     `json:"state"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 	ClosedAt  *time.Time `json:"closed_at,omitempty"`
-	HTMLURL   string    `json:"html_url"`
+	HTMLURL   string     `json:"html_url"`
 	PullReq   *struct {
 		URL string `json:"url"`
 	} `json:"pull_request,omitempty"`

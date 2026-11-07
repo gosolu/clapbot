@@ -72,11 +72,11 @@ func (e *Engine) SetExecutor(x Executor) {
 
 // EvalCandidate is the view of an Eval and its triggers delivered to the main session.
 type EvalCandidate struct {
-	EvalID    string           `json:"eval_id"`
-	Thread    string           `json:"thread"`
-	Triggers  []*TriggerRecord `json:"triggers"`
-	Tickets   []*Ticket        `json:"tickets"`
-	Deadline  time.Time        `json:"deadline"`
+	EvalID   string           `json:"eval_id"`
+	Thread   string           `json:"thread"`
+	Triggers []*TriggerRecord `json:"triggers"`
+	Tickets  []*Ticket        `json:"tickets"`
+	Deadline time.Time        `json:"deadline"`
 }
 
 // =============================================================================

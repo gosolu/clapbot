@@ -26,8 +26,8 @@ func TestPolicyEffectComputationAndFormatting(t *testing.T) {
 		AcceptMode: AcceptObserve, // left auto
 		Rules: []Rule{
 			{Name: "bug_fix", Instructions: "fix critical security bugs only", Enabled: true}, // changed
-			{Name: "code_cleanup", Instructions: "remove dead code", Enabled: false},         // disabled
-			{Name: "docs_update", Instructions: "update markdown docs", Enabled: true},       // unchanged
+			{Name: "code_cleanup", Instructions: "remove dead code", Enabled: false},          // disabled
+			{Name: "docs_update", Instructions: "update markdown docs", Enabled: true},        // unchanged
 		},
 		Sources: map[string]SourcePolicy{
 			"feishu": {

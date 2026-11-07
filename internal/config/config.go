@@ -88,7 +88,7 @@ type GitHubConfig struct {
 	Repository      string   `toml:"repository" yaml:"repository"` // "owner/repo"
 	AgentAccount    string   `toml:"agent_account" yaml:"agent_account"`
 	Token           string   `toml:"token,omitempty" yaml:"token,omitempty"`
-	CLI             string   `toml:"cli,omitempty" yaml:"cli,omitempty"` // "gh" or custom wrapper
+	CLI             string   `toml:"cli,omitempty" yaml:"cli,omitempty"`                   // "gh" or custom wrapper
 	PollSeconds     int      `toml:"poll_seconds,omitempty" yaml:"poll_seconds,omitempty"` // default: 60
 	ObserveIssues   bool     `toml:"observe_issues,omitempty" yaml:"observe_issues,omitempty"`
 	ObservePulls    bool     `toml:"observe_pulls,omitempty" yaml:"observe_pulls,omitempty"`

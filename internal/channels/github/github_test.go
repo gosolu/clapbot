@@ -192,8 +192,10 @@ func TestGitHubPollPullClose(t *testing.T) {
 					Title:    "Feature PR",
 					State:    "closed",
 					ClosedAt: &closedAt,
-					PullReq:  &struct{ URL string `json:"url"` }{URL: "https://api.github.com/..."},
-					User:     ghUser{Login: "alice"},
+					PullReq: &struct {
+						URL string `json:"url"`
+					}{URL: "https://api.github.com/..."},
+					User: ghUser{Login: "alice"},
 				},
 			}
 			return jsonResponse(http.StatusOK, issues), nil
